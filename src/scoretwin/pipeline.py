@@ -13,6 +13,7 @@ import numpy as np
 
 from . import __version__
 from .imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch
+from .gltf_export import build_gltf, validate_embedded_gltf
 from .musicxml import build_musicxml
 from .proposal import get_default_model, load_model, predict_patch
 
@@ -598,6 +599,15 @@ def process_file(
             "rectification": rectification.to_dict(),
         }, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    gltf_text = build_gltf(scene)
+    gltf_validation = validate_embedded_gltf(gltf_text)
+    gltf_path = output / "scene.gltf"
+    gltf_path.write_text(gltf_text, encoding="utf-8")
+    scene["exports"] = {
+        "gltf_file": gltf_path.name,
+        "gltf_validation": gltf_validation,
+        "gltf_semantic_depth_is_physical": False,
+    }
     (output / "scene.json").write_text(json.dumps(scene, indent=2, ensure_ascii=False), encoding="utf-8")
     musicxml = build_musicxml(scene)
     (output / "provisional.musicxml").write_text(musicxml, encoding="utf-8")
@@ -612,6 +622,8 @@ def process_file(
         "musicxml_path": str(output / "provisional.musicxml"),
         "overlay_path": str(output / "overlay.png"),
         "geometry_render_path": str(output / "geometry-render.png"),
+        "gltf_path": str(gltf_path),
+        "gltf_validation": gltf_validation,
         "analysis_raster_path": str(analysis_raster_path) if analysis_raster_path else None,
         "capture_transform_path": str(capture_transform_path) if capture_transform_path else None,
         "source_hash_verified": True,
