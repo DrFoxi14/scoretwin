@@ -154,6 +154,36 @@ def _ellipse(
     return np.asarray(vertices, dtype=np.float32), np.asarray(indices, dtype=np.uint32)
 
 
+
+def _rectangle_outline(
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    z: float,
+    page_height: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Make a thin, non-occluding rectangular outline for unresolved regions."""
+    if width <= 0 or height <= 0:
+        raise ValueError("Unknown-region width and height must be positive.")
+    thickness = min(1.4, max(0.45, min(width, height) * 0.12))
+    horizontal = min(thickness, height / 2.0)
+    vertical = min(thickness, width / 2.0)
+    rectangles = [
+        (x, y, x + width, y + horizontal),
+        (x, y + height - horizontal, x + width, y + height),
+        (x, y + horizontal, x + vertical, y + height - horizontal),
+        (x + width - vertical, y + horizontal, x + width, y + height - horizontal),
+    ]
+    vertices_all: list[np.ndarray] = []
+    indices_all: list[np.ndarray] = []
+    for x0, y0, x1, y1 in rectangles:
+        vertices, indices = _quad(x0, y0, x1, y1, z, page_height)
+        offset = sum(len(item) for item in vertices_all)
+        vertices_all.append(vertices)
+        indices_all.append(indices + offset)
+    return np.concatenate(vertices_all), np.concatenate(indices_all)
+
 def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
     """Serialize supported scene primitives to a self-contained glTF 2.0 file.
 
@@ -334,9 +364,14 @@ def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
         elif kind == "stem":
             targets = stem_targets.get(primitive_id, [])
             target_note = notes_by_id.get(targets[0], {}) if targets else {}
+            target_voice = target_note.get("voice", 1)
+            try:
+                target_voice_layer = max(0, int(target_voice) - 1)
+            except (TypeError, ValueError):
+                target_voice_layer = 0
             z = layer_separation * (
                 1.0 + max(0, int(target_note.get("staff_index", staff_index) or 0)) * 0.15
-                + voice_layer * 0.15
+                + target_voice_layer * 0.15
             )
             x0 = float(geometry.get("x0_px", 0))
             y0 = float(geometry.get("y0_px", 0))
@@ -366,7 +401,7 @@ def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
             bbox = geometry.get("bbox_px", [0, 0, 0, 0])
             x, y, width, height = [float(value) for value in bbox]
             z = layer_separation * 0.5
-            vertices, indices = _quad(x, y, x + width, y + height, z, page_height)
+            vertices, indices = _rectangle_outline(x, y, width, height, z, page_height)
             _add_node(primitive, vertices, indices, material_by_kind[kind], z)
         else:
             skipped.append({"id": primitive_id, "reason": f"unsupported_kind:{kind}"})
