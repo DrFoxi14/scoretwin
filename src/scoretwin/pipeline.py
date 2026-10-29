@@ -38,18 +38,24 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
     estimated_skew = estimate_global_skew_degrees(gray)
     staffs, binary, staff_mask = detect_staff_systems(gray)
     candidates = extract_notehead_candidates(gray, binary, staff_mask, staffs)
-    classified = _classify_candidates(candidates, model or get_default_model())
+    if candidates:
+        proposal_model = model if model is not None else get_default_model()
+        classified = _classify_candidates(candidates, proposal_model)
+    else:
+        classified = []
 
     # Apply bounded local geometry refinement only to candidates already classified
     # as noteheads. This is analysis-by-synthesis at proposal scale, not a global OMR.
     image_height, image_width = gray.shape
+    clean_binary = cv2.subtract(binary, staff_mask) if classified else None
     for item in classified:
         if item["class"] not in ("filled_head", "hollow_head"):
             continue
         staff = staffs[int(item["staff_index"])]
         initial_center = [float(item["center"][0]), float(item["center"][1])]
         fit = refine_notehead_geometry(
-            gray, binary, staff_mask, initial_center, float(staff.spacing), item["class"]
+            gray, binary, staff_mask, initial_center, float(staff.spacing), item["class"],
+            precleaned_binary=clean_binary,
         )
         item["geometry_refinement"] = fit
         if fit["accepted"]:

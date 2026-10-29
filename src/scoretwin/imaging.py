@@ -378,6 +378,7 @@ def refine_notehead_geometry(
     spacing: float,
     kind: str,
     search_fraction: float = 0.35,
+    precleaned_binary: np.ndarray | None = None,
 ) -> dict:
     """Refine a proposed notehead center by local template matching.
 
@@ -392,7 +393,7 @@ def refine_notehead_geometry(
     if spacing <= 0:
         raise ValueError("spacing must be positive.")
 
-    clean = cv2.subtract(binary, staff_mask)
+    clean = precleaned_binary if precleaned_binary is not None else cv2.subtract(binary, staff_mask)
     height, width = gray.shape
     cx, cy = float(center[0]), float(center[1])
     search = max(2, int(round(float(search_fraction) * spacing)))
