@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import xml.etree.ElementTree as ET
@@ -16,7 +17,7 @@ from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
 from scoretwin.proposal import load_model, predict_patch, save_model, train_proposal_model
 from scoretwin.synthetic import generate_synthetic_page
-from scoretwin.web import PAGE as WEB_PAGE, export_gltf
+from scoretwin.web import PAGE as WEB_PAGE, analyze as analyze_web_upload, export_gltf
 
 
 def synthetic_staff() -> np.ndarray:
@@ -491,6 +492,42 @@ def test_browser_gltf_endpoint_exports_texture_without_polluting_scene_json():
     assert "background_png_base64" not in gltf
     assert "backgroundPreviewPngBase64=result.source_preview_png_base64" in WEB_PAGE
     assert "background_png_base64:backgroundPreviewPngBase64" in WEB_PAGE
+
+
+def test_browser_analysis_returns_residual_proof_and_downloadable_png():
+    original = synthetic_staff()
+    ok, encoded = cv2.imencode(".png", original)
+    assert ok
+
+    class MemoryUpload:
+        filename = "synthetic-score.png"
+
+        async def read(self) -> bytes:
+            return encoded.tobytes()
+
+    result = asyncio.run(analyze_web_upload(MemoryUpload(), page=0, corners_json=None))
+    proof = result["identity_reconstruction"]
+    assert proof["exact_pixel_reconstruction_verified"] is True
+    assert proof["mismatched_pixel_count"] == 0
+    assert proof["maximum_absolute_pixel_error"] == 0
+    assert result["residual_download_available"] is True
+    assert result["residual_png_base64"]
+    assert result["identity_report_json"]
+    assert 'id="download-residual"' in WEB_PAGE
+    assert 'id="download-identity-report"' in WEB_PAGE
+    assert "download-residual').addEventListener" in WEB_PAGE
+
+    residual_bytes = base64.b64decode(result["residual_png_base64"], validate=True)
+    residual = cv2.imdecode(np.frombuffer(residual_bytes, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    source_bytes = base64.b64decode(result["source_preview_png_base64"], validate=True)
+    source_preview = cv2.imdecode(np.frombuffer(source_bytes, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    geometry_bytes = base64.b64decode(result["geometry_render_png_base64"], validate=True)
+    geometry_render = cv2.imdecode(np.frombuffer(geometry_bytes, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    assert residual.dtype == np.uint16
+    assert source_preview.shape == geometry_render.shape == residual.shape == original.shape
+    recomposed = geometry_render.astype(np.int32) + residual.astype(np.int32) - 255
+    assert np.array_equal(recomposed.astype(np.uint8), source_preview)
+    assert np.array_equal(source_preview, original)
 
 
 def test_gltf_export_handles_an_empty_scene_with_a_valid_buffer():
