@@ -377,7 +377,7 @@ document.getElementById('capture-frame').addEventListener('click',async()=>{
   }
   if(!frames.length)throw new Error('No camera frame could be encoded.');
   frames.sort((a,b)=>b.score.selection_score-a.score.selection_score);
-  const selected=frames[0],chosenIndex=selected;
+  const selected=frames[0];
   liveCapturedFile=new File([selected.blob],'scoretwin-live-burst-best.jpg',{type:'image/jpeg',lastModified:Date.now()});
   liveCaptureMetadata={
    method:'live_camera_burst_best_single_frame',
