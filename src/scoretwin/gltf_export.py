@@ -373,6 +373,9 @@ def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
 
     while len(binary) % 4:
         binary.append(0)
+    # glTF buffers require a positive byteLength even when the scene has no mesh data.
+    if not binary:
+        binary.extend(b"\x00\x00\x00\x00")
     gltf = {
         "asset": {"version": "2.0", "generator": "ScoreTwin IDSR glTF exporter"},
         "scene": 0,
@@ -441,6 +444,15 @@ def validate_embedded_gltf(gltf_text: str) -> dict:
         byte_length = int(accessor["count"]) * components * component_size
         if byte_offset < 0 or byte_offset + byte_length > int(view["byteLength"]):
             raise ValueError(f"Accessor {index} reads outside its bufferView.")
+    nodes = gltf.get("nodes", [])
+    for node_index, node in enumerate(nodes):
+        mesh_ref = node.get("mesh")
+        if mesh_ref is not None and not 0 <= int(mesh_ref) < len(gltf.get("meshes", [])):
+            raise ValueError(f"Node {node_index} refers to a missing mesh.")
+    for scene_index, entry in enumerate(gltf.get("scenes", [])):
+        for node_ref in entry.get("nodes", []):
+            if not 0 <= int(node_ref) < len(nodes):
+                raise ValueError(f"Scene {scene_index} refers to a missing node.")
     for mesh_index, mesh in enumerate(gltf.get("meshes", [])):
         for primitive in mesh.get("primitives", []):
             if int(primitive["attributes"]["POSITION"]) >= len(accessors):
@@ -453,9 +465,13 @@ def validate_embedded_gltf(gltf_text: str) -> dict:
             index_accessor = accessors[int(primitive["indices"])]
             if position_accessor.get("type") != "VEC3" or index_accessor.get("type") != "SCALAR":
                 raise ValueError(f"Mesh {mesh_index} has incorrect accessor shapes.")
+            if int(primitive.get("mode", 4)) != 4:
+                raise ValueError(f"Mesh {mesh_index} is not a triangle mesh.")
+            index_count = int(index_accessor["count"])
+            if index_count % 3:
+                raise ValueError(f"Mesh {mesh_index} has a non-triangular index count.")
             view = views[int(index_accessor["bufferView"])]
             global_offset = int(view.get("byteOffset", 0)) + int(index_accessor.get("byteOffset", 0))
-            index_count = int(index_accessor["count"])
             indices = struct.unpack(
                 "<" + "I" * index_count,
                 raw[global_offset:global_offset + index_count * 4],
