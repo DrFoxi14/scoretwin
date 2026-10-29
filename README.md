@@ -74,6 +74,17 @@ Measure the actual artifact bundle size, excluding the byte-identical source cop
 
 The command includes all other files in the analysis bundle, including the residual, structural previews, scene graph, MusicXML and textured glTF. It reports stored artifact bits per page pixel with a hash/size manifest. This is storage accounting—not formal MDL or an oracle comparison—and its report is written outside the measured bundle to avoid self-referential byte counts.
 
+### Human identity calibration
+
+No scalar DID is released as validated until there are blinded human ratings. The calibration command consumes a study manifest; it never fabricates ratings:
+
+    scoretwin calibrate-human --study ./study/human-ratings.json --out ./results/human-calibration.json --bootstrap-samples 2000
+
+The input schema is \`scoretwin-human-calibration-v1\`, with a 1–7 identity rating per rater/pair, a declared direction for each component (higher/lower means more identical), an independence-group key for source-piece clustering, and optional \`repeat_group\` IDs for hidden repeats. The report calculates Spearman associations with source-group bootstrap intervals, pairwise quadratic-weighted kappa, within-rater repeat agreement and a study-size planning heuristic. Repeated comparisons are collapsed before correlation so repeats do not inflate the independent-pair count.
+
+For a first preregistered study, the current planning heuristic recommends roughly 60 unique comparison pairs across at least 5 independent raters, plus about 10 hidden repeats per rater. The underlying approximation targets \`|rho|=0.4\`, two-sided \`alpha=0.05\`, and 80% power under a Fisher-z approximation; it is not a guarantee and should be checked with pilot/simulation before preregistration. Include clearly identical, clearly different, ambiguous, adversarial and out-of-distribution cases; randomize order and keep raters blind to system identity.
+
+
 Analyze a PDF page (zero-indexed page number):
 
     scoretwin analyze ./score.pdf --page 0 --out ./runs/score
