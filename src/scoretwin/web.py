@@ -12,6 +12,7 @@ import cv2
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 
+from .gltf_export import build_gltf, validate_embedded_gltf
 from .imaging import load_grayscale
 from .pipeline import process_file, render_geometry_scene
 from .musicxml import build_musicxml
@@ -66,6 +67,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <section class="panel"><h2>Review and edit pitch proposals</h2>
 <p class="muted">Changing a pitch changes the symbolic proposal only. The original image and its recorded hash do not change. Durations, key signatures, accidentals, voices and part assignment still require review.</p>
 <div id="editor"></div><button id="export-edits" type="button">Regenerate MusicXML from edits</button>
+<button id="export-gltf-edits" type="button">Download current 3D scene (.gltf)</button>
 </section>
 <section class="panel"><h2>Warnings</h2><pre id="warnings"></pre></section>
 </div>
@@ -315,6 +317,20 @@ document.getElementById('reset-edits').addEventListener('click',()=>{
  buildEditor();draw3d();drawPage();
  document.getElementById('status').textContent='Edits reset to the initial proposals. The source file was never modified.';
 });
+document.getElementById('export-gltf-edits').addEventListener('click',async()=>{
+ if(!currentScene)return;
+ const button=document.getElementById('export-gltf-edits');button.disabled=true;
+ try{
+  const response=await fetch('/api/export-gltf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentScene)});
+  const result=await response.json();if(!response.ok)throw new Error(result.detail||'glTF export failed');
+  const blob=new Blob([result.gltf],{type:'model/gltf+json'});
+  const url=URL.createObjectURL(blob),anchor=document.createElement('a');
+  anchor.href=url;anchor.download='scoretwin-scene.gltf';anchor.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  document.getElementById('status').textContent='Self-contained glTF exported. Its Z offsets are semantic layers, not physical ink depth.';
+ }catch(error){document.getElementById('status').textContent=error.message||String(error);}
+ finally{button.disabled=false;}
+});
 document.getElementById('export-edits').addEventListener('click',async()=>{
  if(!currentScene)return;
  const button=document.getElementById('export-edits');button.disabled=true;
@@ -469,6 +485,22 @@ def render_current_geometry(scene: dict = Body(...)) -> dict:
         return {"geometry_render_png_base64": _render_base64(output_shape, scene, scale=scale)}
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/export-gltf")
+def export_gltf(scene: dict = Body(...)) -> dict:
+    if scene.get("schema") != "scoretwin-scene-0.1":
+        raise HTTPException(status_code=400, detail="Unrecognized ScoreTwin scene schema.")
+    if len(scene.get("notes", [])) > 5000 or len(scene.get("primitives", [])) > 30000:
+        raise HTTPException(status_code=413, detail="Scene contains too many notes or geometry primitives.")
+    try:
+        gltf = build_gltf(scene)
+        validation = validate_embedded_gltf(gltf)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if len(gltf.encode("utf-8")) > 45 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="The self-contained glTF export exceeds 45 MiB.")
+    return {"gltf": gltf, "validation": validation}
 
 
 @app.post("/api/export")
