@@ -49,7 +49,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <div id="results" hidden>
 <div class="grid">
 <section class="panel"><h2>2D geometry editor</h2><p class="muted">Drag a proposal box to adjust its geometry. This edits the reconstruction proposal, not the preserved source file.</p><canvas id="pageCanvas" width="1100" height="400" aria-label="Draggable notehead proposals over the source page"></canvas></section>
-<section class="panel"><h2>Scene summary</h2><pre id="summary"></pre><div><a id="download" download="provisional.musicxml">Download provisional MusicXML</a></div><button id="export-scene" type="button">Download edited scene JSON</button></section>
+<section class="panel"><h2>Scene summary</h2><pre id="summary"></pre><div><a id="download" download="provisional.musicxml">Download provisional MusicXML</a></div><button id="export-scene" type="button">Download edited scene JSON</button><button id="reset-edits" type="button">Reset edits</button></section>
 </div>
 <section class="panel"><h2>3D semantic layer view</h2>
 <p class="muted">Drag to rotate. The layer offset is a visualization convention, not measured physical ink depth.</p>
@@ -64,7 +64,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <section class="panel"><h2>Warnings</h2><pre id="warnings"></pre></section>
 </div>
 <script>
-let currentScene=null, yaw=-0.38, tilt=-0.2, dragging=false, draggingNote=-1, lastX=0, lastY=0;
+let currentScene=null, originalScene=null, yaw=-0.38, tilt=-0.2, dragging=false, draggingNote=-1, lastX=0, lastY=0;
 const canvas=document.getElementById('scene3d'),ctx=canvas.getContext('2d');
 const pageCanvas=document.getElementById('pageCanvas'),pageCtx=pageCanvas.getContext('2d');
 const sourcePreview=new Image();
@@ -193,6 +193,7 @@ form.addEventListener('submit',async(event)=>{
   if(!response.ok)throw new Error(result.detail||'Analysis failed');
   currentScene=result.scene;
   currentScene.source=result.source;
+  originalScene=JSON.parse(JSON.stringify(currentScene));
   sourcePreview.src='data:image/png;base64,'+result.source_preview_png_base64;
   document.getElementById('summary').textContent=JSON.stringify(result.summary,null,2);
   document.getElementById('warnings').textContent=result.warnings.join('\n');
@@ -216,7 +217,14 @@ document.getElementById('export-scene').addEventListener('click',()=>{
  if(!currentScene)return;
  const blob=new Blob([JSON.stringify(currentScene,null,2)],{type:'application/json'});
  const url=URL.createObjectURL(blob),anchor=document.createElement('a');
- anchor.href=url;anchor.download='scoretwin-edited-scene.json';anchor.click();URL.revokeObjectURL(url);
+ anchor.href=url;anchor.download='scoretwin-edited-scene.json';anchor.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+document.getElementById('reset-edits').addEventListener('click',()=>{
+ if(!originalScene)return;
+ currentScene=JSON.parse(JSON.stringify(originalScene));
+ buildEditor();draw3d();drawPage();
+ document.getElementById('status').textContent='Edits reset to the initial proposals. The source file was never modified.';
 });
 document.getElementById('export-edits').addEventListener('click',async()=>{
  if(!currentScene)return;
