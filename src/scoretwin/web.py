@@ -445,19 +445,17 @@ async def analyze(
                 "filename": filename,
                 "server_persisted": False,
             }
-            analysis_image_path = analysis_result["analysis_raster_path"]
-            analysis_gray = (
-                load_grayscale(analysis_image_path)
-                if analysis_image_path
-                else gray
-            )
-            preview = analysis_gray
-            preview_scale = min(1.0, 1600.0 / max(analysis_gray.shape[1], analysis_gray.shape[0]))
+            analysis_pixels_path = analysis_result["analysis_pixels_path"]
+            analysis_pixels = cv2.imread(str(analysis_pixels_path), cv2.IMREAD_UNCHANGED)
+            if analysis_pixels is None:
+                raise RuntimeError("Could not read the channel-preserving analysis raster.")
+            preview = analysis_pixels
+            preview_scale = min(1.0, 1600.0 / max(analysis_pixels.shape[1], analysis_pixels.shape[0]))
             if preview_scale < 1.0:
                 preview = cv2.resize(
-                    analysis_gray,
-                    (max(1, int(round(analysis_gray.shape[1] * preview_scale))),
-                     max(1, int(round(analysis_gray.shape[0] * preview_scale)))),
+                    analysis_pixels,
+                    (max(1, int(round(analysis_pixels.shape[1] * preview_scale))),
+                     max(1, int(round(analysis_pixels.shape[0] * preview_scale)))),
                     interpolation=cv2.INTER_AREA,
                 )
             success, encoded = cv2.imencode(".png", preview)
@@ -495,8 +493,8 @@ async def analyze(
                 "source_preview_png_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
                 "geometry_render_png_base64": _render_base64(
                     (
-                        max(1, int(round(analysis_gray.shape[0] * preview_scale))),
-                        max(1, int(round(analysis_gray.shape[1] * preview_scale))),
+                        max(1, int(round(analysis_pixels.shape[0] * preview_scale))),
+                        max(1, int(round(analysis_pixels.shape[1] * preview_scale))),
                     ),
                     scene,
                     scale=preview_scale,
