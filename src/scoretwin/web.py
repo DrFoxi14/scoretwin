@@ -383,7 +383,7 @@ document.getElementById('capture-frame').addEventListener('click',async()=>{
    frames_encoded:frames.length,
    selection_metric:'edge_energy_times_contrast_saturation_on_192x144_preview',
    selection_metric_calibrated:false,
-   frame_scores:frames.map((frame,index)=>({rank:index+1,contrast:frame.score.contrast,edge_energy:frame.score.edge_energy,selection_score:frame.score.selection_score,width_px:frame.width,height_px:frame.height})),
+   frame_scores:frames.map((frame,index)=>({rank:index+1,contrast:frame.score.contrast,edge_energy:frame.score.edgeEnergy,selection_score:frame.score.selection_score,width_px:frame.width,height_px:frame.height})),
    selected_width_px:selected.width,
    selected_height_px:selected.height,
    fusion_performed:false
@@ -398,10 +398,10 @@ document.getElementById('capture-frame').addEventListener('click',async()=>{
  }
 });
 document.getElementById('file').addEventListener('change',()=>{
- liveCapturedFile=null;loadCornerPreview();
+ liveCapturedFile=null;liveCaptureMetadata=null;loadCornerPreview();
 });
 document.getElementById('camera-file').addEventListener('change',()=>{
- liveCapturedFile=null;loadCornerPreview();
+ liveCapturedFile=null;liveCaptureMetadata=null;loadCornerPreview();
 });
 window.addEventListener('pagehide',stopLiveCamera);
 document.getElementById('mark-corners').addEventListener('click',()=>{
