@@ -180,7 +180,8 @@ function buildEditor(){
  const letters=['C','D','E','F','G','A','B'];
  currentScene.notes.forEach((note,index)=>{
   const row=document.createElement('div');row.className='editor-row';
-  const title=document.createElement('span');title.textContent='Proposal '+(index+1)+' · '+note.id+' · '+Math.round(note.center[0])+','+Math.round(note.center[1]);
+  const hint=(note.duration_hypothesis&&note.duration_hypothesis.candidate)||'duration unresolved';
+  const title=document.createElement('span');title.textContent='Proposal '+(index+1)+' · '+note.id+' · '+Math.round(note.center[0])+','+Math.round(note.center[1])+' · '+hint;
   const select=document.createElement('select');select.setAttribute('aria-label','Pitch for '+note.id);
   for(let octave=2;octave<=7;octave++)letters.forEach(letter=>{
    const option=document.createElement('option');option.value=letter+octave;option.textContent=letter+octave;
