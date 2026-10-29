@@ -131,6 +131,7 @@ def evaluate_photo_smoke(
             "warnings": scene["warnings"],
         })
 
+    source_preserved = sum(row["source_bytes_preserved"] for row in rows)
     pages_with_staff = sum(row["staffs_detected"] > 0 for row in rows)
     pages_with_notes = sum(row["notehead_proposals"] > 0 for row in rows)
     return {
@@ -139,7 +140,9 @@ def evaluate_photo_smoke(
         "data_status": "no_independent_symbolic_or_geometric_ground_truth",
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
         "pages_n": len(rows),
-        "pages_source_bytes_preserved_n": sum(row["source_bytes_preserved"] for row in rows),
+        "pages_source_bytes_preserved_n": source_preserved,
+        "source_bytes_preserved_rate": source_preserved / len(rows),
+        "source_bytes_preserved_rate_wilson_95_ci": _wilson_ci(source_preserved, len(rows)),
         "sampling_note": (
             "Pages are purposively selected. Intervals below describe page-level variation under "
             "an iid resampling model and do not support population generalization."
