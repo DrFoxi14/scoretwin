@@ -16,7 +16,7 @@ from .benchmark_manifest import evaluate_manifest
 from .benchmark_photo_smoke import evaluate_photo_smoke
 from .gltf_export import validate_embedded_gltf
 from .imaging import load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral
-from .metrics import compare_idsr_components
+from .metrics import compare_idsr_components, measure_bundle_storage
 from .pipeline import process_file
 from .proposal import save_model, train_proposal_model
 from .synthetic import generate_synthetic_page
@@ -110,6 +110,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate_gltf = commands.add_parser("validate-gltf", help="Validate a self-contained glTF 2.0 scene")
     validate_gltf.add_argument("input", type=Path, help="Path to a ScoreTwin .gltf JSON file")
+
+    measure_bundle = commands.add_parser(
+        "measure-bundle",
+        help="Measure stored artifact bytes per pixel without claiming formal MDL",
+    )
+    measure_bundle.add_argument("input", type=Path, help="Analysis bundle directory")
+    measure_bundle.add_argument("--pixel-count", type=int, default=None, help="Override scene.json image width × height")
+    measure_bundle.add_argument("--out", type=Path, default=None, help="Optional JSON report path outside the measured bundle")
 
     compare = commands.add_parser(
         "compare",
@@ -282,6 +290,36 @@ def main() -> None:
     elif args.command == "validate-gltf":
         report = validate_embedded_gltf(args.input.read_text(encoding="utf-8"))
         print(json.dumps({"input": str(args.input), **report}, indent=2, ensure_ascii=False))
+    elif args.command == "measure-bundle":
+        bundle_dir = args.input.resolve()
+        pixel_count = args.pixel_count
+        if pixel_count is None:
+            scene_path = bundle_dir / "scene.json"
+            if not scene_path.is_file():
+                raise FileNotFoundError("Pass --pixel-count or provide scene.json in the bundle.")
+            scene = json.loads(scene_path.read_text(encoding="utf-8"))
+            try:
+                pixel_count = int(scene["image"]["width"]) * int(scene["image"]["height"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError("scene.json must contain integer image width and height.") from exc
+        report = measure_bundle_storage(bundle_dir, pixel_count)
+        report_path = None
+        if args.out is not None:
+            out_path = args.out.resolve()
+            if out_path.is_relative_to(bundle_dir):
+                raise ValueError("Write the storage report outside the measured bundle to avoid self-reference.")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
+            report_path = str(out_path)
+        print(json.dumps({
+            "report_path": report_path,
+            "pixel_count": report["pixel_count"],
+            "included_file_count": report["included_file_count"],
+            "included_file_bytes": report["included_file_bytes"],
+            "stored_artifact_bits_per_pixel": report["stored_artifact_bits_per_pixel"],
+            "excluded_source_copy_bytes": report["excluded_source_copy_bytes"],
+            "status": report["status"],
+        }, indent=2, ensure_ascii=False, allow_nan=False))
     elif args.command == "compare":
         reference_pixels = load_pixel_array(args.reference_image, page=args.reference_page)
         candidate_pixels = load_pixel_array(args.candidate_image, page=args.candidate_page)
