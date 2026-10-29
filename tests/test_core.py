@@ -10,7 +10,7 @@ from scoretwin.benchmark import evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
 from scoretwin.imaging import detect_staff_systems, estimate_global_skew_degrees, extract_notehead_candidates, refine_notehead_geometry, staff_step_and_pitch
 from scoretwin.musicxml import build_musicxml
-from scoretwin.pipeline import analyze_array, process_file
+from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
 from scoretwin.proposal import load_model, predict_patch, save_model, train_proposal_model
 from scoretwin.synthetic import generate_synthetic_page
 
@@ -89,6 +89,24 @@ def test_pitch_mapping_uses_treble_bottom_line_e4():
     assert (step, letter, octave) == (0, "E", 4)
     step, letter, octave = staff_step_and_pitch(float(staffs[0].bottom) - staffs[0].spacing, staffs[0])
     assert (step, letter, octave) == (2, "G", 4)
+
+
+def test_uncertainty_diagnostics_separate_low_contrast_from_unknown_marks():
+    model = {
+        "weights": np.zeros((16 * 16 + 1, 3), dtype=np.float32),
+        "labels": ("filled_head", "hollow_head", "artifact"),
+    }
+    candidates = [{
+        "id": "candidate-blank",
+        "bbox": [1, 1, 16, 16],
+        "center": [9.0, 9.0],
+        "staff_index": 0,
+        "crop": np.full((24, 24), 255, dtype=np.uint8),
+    }]
+    result = _classify_candidates(candidates, model)[0]
+    assert result["class"] == "unknown"
+    assert result["unknown_reason"] == "low_local_contrast"
+    assert result["image_quality_diagnostics"]["thresholds_calibrated"] is False
 
 
 def test_synthetic_proposal_model_returns_normalized_probabilities():

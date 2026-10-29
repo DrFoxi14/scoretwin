@@ -65,6 +65,8 @@ Then open http://127.0.0.1:8000. Uploaded files are processed by the local serve
 - geometry-render.png: structural render of the currently modeled primitives (not a complete/pixel-identical page render);
 - provisional.musicxml: XML output carrying explicit review markers.
 
+Unresolved regions include a heuristic reason such as low local contrast, low local sharpness/blur, or an unfamiliar/uncertain mark. These thresholds are not calibrated; the UI explicitly treats them as diagnostic hints, not probabilities.
+
 The preserved source is the lossless identity anchor. The overlay is a diagnostic layer, not a claim that all original ink has been parsed into primitives. The 3D view uses a semantic layer offset; it is not a measurement of the physical relief of ink.
 
 ## Epistemic status

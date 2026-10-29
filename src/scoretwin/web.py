@@ -201,7 +201,8 @@ form.addEventListener('submit',async(event)=>{
   originalScene=JSON.parse(JSON.stringify(currentScene));
   sourcePreview.src='data:image/png;base64,'+result.source_preview_png_base64;
   document.getElementById('summary').textContent=JSON.stringify(result.summary,null,2);
-  document.getElementById('warnings').textContent=result.warnings.join('\n');
+  const unresolved=(currentScene.unknown_objects||[]).map(item=>item.id+': '+item.reason);
+  document.getElementById('warnings').textContent=[...result.warnings,...unresolved].join('\n');
   document.getElementById('geometry-render').src='data:image/png;base64,'+result.geometry_render_png_base64;
   setDownload(result.musicxml);document.getElementById('results').hidden=false;
   buildEditor();draw3d();
