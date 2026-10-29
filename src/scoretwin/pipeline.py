@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 from . import __version__
-from .imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch
+from .imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch
 from .gltf_export import build_gltf, validate_embedded_gltf
 from .musicxml import build_musicxml
 from .proposal import get_default_model, load_model, predict_patch
@@ -505,6 +505,9 @@ def process_file(
     source_bytes = source.read_bytes()
     source_hash = hashlib.sha256(source_bytes).hexdigest()
     source_gray = load_grayscale(source, page=page)
+    source_pixels = load_pixel_array(source, page=page)
+    if source_pixels.shape[:2] != source_gray.shape:
+        raise ValueError("Decoded color/grayscale source frames have different dimensions.")
     if rectify_skew and rectify_corners is not None:
         raise ValueError("Choose either global-skew rectification or page-corner rectification, not both.")
     if rectify_corners is not None:
@@ -514,6 +517,22 @@ def process_file(
     else:
         rectification = None
     analysis_gray = rectification.image if rectification is not None else source_gray
+    if rectification is not None and rectification.applied:
+        matrix = np.asarray(rectification.source_to_rectified, dtype=np.float64)
+        output_size = (int(analysis_gray.shape[1]), int(analysis_gray.shape[0]))
+        border_value = 255 if source_pixels.ndim == 2 else (255, 255, 255)
+        analysis_pixels = cv2.warpPerspective(
+            source_pixels,
+            matrix,
+            output_size,
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=border_value,
+        )
+    else:
+        analysis_pixels = source_pixels.copy()
+    if analysis_pixels.shape[:2] != analysis_gray.shape:
+        raise RuntimeError("Color/grayscale analysis rasters do not share one coordinate frame.")
     model = load_model(model_path) if model_path else get_default_model()
     scene = analyze_array(analysis_gray, model=model)
     residual_skew = scene["capture_diagnostics"]["estimated_staffline_angle_deg"]
@@ -583,51 +602,74 @@ def process_file(
         raise RuntimeError("Could not encode geometry render.")
     (output / "geometry-render.png").write_bytes(geometry_encoded.tobytes())
 
-    # Exact pixel reconstruction by a signed photometric residual.
-    # residual_signed = analysis_gray - geometry_render; PNG stores residual + 255
-    # as uint16 so every value in [-255, 255] is represented exactly.
-    residual_signed = analysis_gray.astype(np.int16) - geometry_render.astype(np.int16)
+    # Exact pixel reconstruction by a signed residual. For color source images the
+    # structural render is lifted to BGR, so the residual retains chromatic information
+    # that the grayscale OMR detector does not use.
+    geometry_pixels = (
+        geometry_render
+        if analysis_pixels.ndim == 2
+        else cv2.cvtColor(geometry_render, cv2.COLOR_GRAY2BGR)
+    )
+    if geometry_pixels.shape != analysis_pixels.shape:
+        raise RuntimeError("Geometry render and analysis pixels do not share channel dimensions.")
+    residual_signed = analysis_pixels.astype(np.int16) - geometry_pixels.astype(np.int16)
     residual_offset = (residual_signed.astype(np.int32) + 255).astype(np.uint16)
     residual_path = output / "residual-offset255.png"
     if not cv2.imwrite(str(residual_path), residual_offset):
         raise IOError("Could not write the uint16 photometric residual.")
     stored_residual = cv2.imread(str(residual_path), cv2.IMREAD_UNCHANGED)
-    if stored_residual is None or stored_residual.dtype != np.uint16 or stored_residual.shape != analysis_gray.shape:
+    if stored_residual is None or stored_residual.dtype != np.uint16 or stored_residual.shape != analysis_pixels.shape:
         raise IOError("The saved photometric residual failed its lossless read-back check.")
 
-    reconstruction_int = (
-        geometry_render.astype(np.int32) + stored_residual.astype(np.int32) - 255
-    )
+    reconstruction_int = geometry_pixels.astype(np.int32) + stored_residual.astype(np.int32) - 255
     if reconstruction_int.min() < 0 or reconstruction_int.max() > 255:
         raise IOError("The residual reconstruction exceeded the uint8 pixel range.")
     reconstructed = reconstruction_int.astype(np.uint8)
-    exact_pixels = bool(np.array_equal(reconstructed, analysis_gray))
+    exact_pixels = bool(np.array_equal(reconstructed, analysis_pixels))
     if not exact_pixels:
         raise IOError("Geometry render plus residual does not reconstruct the analysis raster exactly.")
     reconstructed_path = output / "reconstructed-analysis.png"
     if not cv2.imwrite(str(reconstructed_path), reconstructed):
         raise IOError("Could not write the reconstructed analysis raster.")
-    reconstructed_readback = cv2.imread(str(reconstructed_path), cv2.IMREAD_GRAYSCALE)
-    if reconstructed_readback is None or not np.array_equal(reconstructed_readback, analysis_gray):
+    reconstructed_readback = cv2.imread(str(reconstructed_path), cv2.IMREAD_UNCHANGED)
+    if reconstructed_readback is None or not np.array_equal(reconstructed_readback, analysis_pixels):
         raise IOError("The saved reconstructed image failed its pixel-equality check.")
 
+    analysis_pixels_path = output / "analysis-raster-pixels.png"
+    if not cv2.imwrite(str(analysis_pixels_path), analysis_pixels):
+        raise IOError("Could not write the channel-preserving analysis raster.")
+
+    pixel_mismatches = (
+        np.any(reconstructed != analysis_pixels, axis=2)
+        if analysis_pixels.ndim == 3
+        else reconstructed != analysis_pixels
+    )
+    absolute_error = np.abs(reconstructed.astype(np.int16) - analysis_pixels.astype(np.int16))
     identity_reconstruction = {
         "schema": "scoretwin-lossless-residual-0.1",
-        "analysis_raster_encoding": "uint8 grayscale",
-        "residual_encoding": "uint16 PNG = analysis_pixel - geometry_render_pixel + 255",
-        "reconstruction_equation": "analysis_pixel = geometry_render_pixel + residual_uint16 - 255",
-        "source_analysis_raster_sha256": hashlib.sha256(analysis_gray.tobytes()).hexdigest(),
-        "geometry_render_sha256": hashlib.sha256(geometry_render.tobytes()).hexdigest(),
+        "analysis_raster_encoding": (
+            "uint8 grayscale" if analysis_pixels.ndim == 2
+            else f"uint8 {analysis_pixels.shape[2]}-channel BGR analysis raster"
+        ),
+        "residual_encoding": "uint16 PNG = analysis_channel_value - geometry_channel_value + 255",
+        "reconstruction_equation": "analysis_channel_value = geometry_channel_value + residual_uint16 - 255",
+        "source_analysis_raster_sha256": hashlib.sha256(analysis_pixels.tobytes()).hexdigest(),
+        "geometry_render_sha256": hashlib.sha256(geometry_pixels.tobytes()).hexdigest(),
         "reconstructed_raster_sha256": hashlib.sha256(reconstructed.tobytes()).hexdigest(),
         "residual_file_sha256": hashlib.sha256(residual_path.read_bytes()).hexdigest(),
-        "pixel_count": int(analysis_gray.size),
-        "mismatched_pixel_count": int(np.count_nonzero(reconstructed != analysis_gray)),
-        "maximum_absolute_pixel_error": int(np.max(np.abs(reconstructed.astype(np.int16) - analysis_gray.astype(np.int16)))),
+        "pixel_count": int(analysis_pixels.shape[0] * analysis_pixels.shape[1]),
+        "channel_value_count": int(analysis_pixels.size),
+        "mismatched_pixel_count": int(np.count_nonzero(pixel_mismatches)),
+        "maximum_absolute_pixel_error": int(absolute_error.max()),
         "exact_pixel_reconstruction_verified": exact_pixels,
-        "applies_to": "decoded grayscale analysis raster, including rectification if enabled",
+        "applies_to": (
+            "decoded grayscale analysis raster" if analysis_pixels.ndim == 2
+            else "decoded BGR color analysis raster"
+        ) + ", including resampling if rectification is enabled",
         "does_not_claim": [
             "symbolic music correctness",
-            "reconstruction of original color from grayscale",
+            "recovery of original compressed source bytes from decoded pixels",
+            "recovery of discarded alpha after white compositing",
             "physical ink-depth recovery",
             "lossy compression of the residual",
         ],
@@ -655,7 +697,7 @@ def process_file(
             "rectification": rectification.to_dict(),
         }, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    texture_ok, texture_encoded = cv2.imencode(".png", analysis_gray)
+    texture_ok, texture_encoded = cv2.imencode(".png", analysis_pixels)
     if not texture_ok:
         raise RuntimeError("Could not encode the analysis raster for the 3D scene texture.")
     gltf_text = build_gltf(scene, background_png=texture_encoded.tobytes())
@@ -688,6 +730,7 @@ def process_file(
         "gltf_path": str(gltf_path),
         "gltf_validation": gltf_validation,
         "analysis_raster_path": str(analysis_raster_path) if analysis_raster_path else None,
+        "analysis_pixels_path": str(analysis_pixels_path),
         "capture_transform_path": str(capture_transform_path) if capture_transform_path else None,
         "source_hash_verified": True,
         "source_sha256": source_hash,
