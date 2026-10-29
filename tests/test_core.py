@@ -454,6 +454,16 @@ def test_musicxml_tick_mode_preserves_legacy_quarter_unit_values():
     assert note.find("duration").text == "32"
 
 
+def test_browser_editor_can_promote_unresolved_regions_without_claiming_automatic_recognition():
+    assert 'id="unknown-editor"' in WEB_PAGE
+    assert "Promote to note" in WEB_PAGE
+    assert "user_promoted_unknown_region" in WEB_PAGE
+    assert "automatic_recognition_claimed:false" in WEB_PAGE
+    assert "currentScene.unknown_objects=currentScene.unknown_objects.filter(value=>value.id!==item.id)" in WEB_PAGE
+    assert "currentScene.notes.push(note)" in WEB_PAGE
+    assert "currentScene.relations.push({type:'geometrically_assigned_to_staff'" in WEB_PAGE
+
+
 def test_browser_editor_exposes_accidental_duration_and_voice_controls():
     assert "Accidental for '+note.id" in WEB_PAGE
     assert "Duration for '+note.id" in WEB_PAGE
