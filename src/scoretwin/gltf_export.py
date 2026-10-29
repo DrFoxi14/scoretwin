@@ -207,9 +207,15 @@ def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
 
     notes_by_id = {str(note.get("id")): note for note in scene.get("notes", [])}
     stem_targets: dict[str, list[str]] = {}
+    outgoing_relations: dict[str, list[dict]] = {}
+    incoming_relations: dict[str, list[dict]] = {}
     for relation in scene.get("relations", []):
+        source_id = str(relation.get("source", ""))
+        target_id = str(relation.get("target", ""))
+        outgoing_relations.setdefault(source_id, []).append(dict(relation))
+        incoming_relations.setdefault(target_id, []).append(dict(relation))
         if relation.get("type") == "stem_of":
-            stem_targets.setdefault(str(relation.get("source")), []).append(str(relation.get("target")))
+            stem_targets.setdefault(source_id, []).append(target_id)
 
     binary = bytearray()
     buffer_views: list[dict] = []
@@ -326,7 +332,11 @@ def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
                         )
                         if note.get(key) is not None
                     },
-                    "relations": {"stem_of": stem_targets.get(str(primitive.get("id")), [])},
+                    "relations": {
+                        "stem_of": stem_targets.get(str(primitive.get("id")), []),
+                        "outgoing": outgoing_relations.get(str(primitive.get("id")), []),
+                        "incoming": incoming_relations.get(str(primitive.get("id")), []),
+                    },
                 }
             },
         })
@@ -490,11 +500,14 @@ def validate_embedded_gltf(gltf_text: str) -> dict:
                 raise ValueError(f"Scene {scene_index} refers to a missing node.")
     for mesh_index, mesh in enumerate(gltf.get("meshes", [])):
         for primitive in mesh.get("primitives", []):
-            if int(primitive["attributes"]["POSITION"]) >= len(accessors):
+            position_ref = int(primitive["attributes"]["POSITION"])
+            index_ref = int(primitive["indices"])
+            material_ref = int(primitive["material"])
+            if not 0 <= position_ref < len(accessors):
                 raise ValueError(f"Mesh {mesh_index} has an invalid POSITION accessor.")
-            if int(primitive["indices"]) >= len(accessors):
+            if not 0 <= index_ref < len(accessors):
                 raise ValueError(f"Mesh {mesh_index} has an invalid index accessor.")
-            if int(primitive["material"]) >= len(gltf.get("materials", [])):
+            if not 0 <= material_ref < len(gltf.get("materials", [])):
                 raise ValueError(f"Mesh {mesh_index} has an invalid material.")
             position_accessor = accessors[int(primitive["attributes"]["POSITION"])]
             index_accessor = accessors[int(primitive["indices"])]
