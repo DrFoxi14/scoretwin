@@ -12,6 +12,7 @@ import cv2
 from .benchmark import evaluate_perspective_capture, evaluate_synthetic
 from .benchmark_manifest import evaluate_manifest
 from .benchmark_photo_smoke import evaluate_photo_smoke
+from .gltf_export import validate_embedded_gltf
 from .imaging import load_grayscale, rectify_global_skew, rectify_page_quadrilateral
 from .pipeline import process_file
 from .proposal import save_model, train_proposal_model
@@ -103,6 +104,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help='Manual page corners as JSON: [[x_tl,y_tl],[x_tr,y_tr],[x_br,y_br],[x_bl,y_bl]] in source pixels',
     )
+
+    validate_gltf = commands.add_parser("validate-gltf", help="Validate a self-contained glTF 2.0 scene")
+    validate_gltf.add_argument("input", type=Path, help="Path to a ScoreTwin .gltf JSON file")
 
     serve = commands.add_parser("serve", help="Run the local browser interface")
     serve.add_argument("--host", default="127.0.0.1")
@@ -256,6 +260,9 @@ def main() -> None:
             "rectification_method": rectification.method,
             "reason": rectification.reason,
         }, indent=2, ensure_ascii=False))
+    elif args.command == "validate-gltf":
+        report = validate_embedded_gltf(args.input.read_text(encoding="utf-8"))
+        print(json.dumps({"input": str(args.input), **report}, indent=2, ensure_ascii=False))
     elif args.command == "serve":
         import uvicorn
         uvicorn.run("scoretwin.web:app", host=args.host, port=args.port, reload=False)
