@@ -23,6 +23,7 @@ from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
 from scoretwin.proposal import load_model, predict_patch, save_model, train_proposal_model
 from scoretwin.synthetic import generate_synthetic_page
+from scoretwin.scene_edit import promote_unknown_region
 from scoretwin.web import PAGE as WEB_PAGE, analyze as analyze_web_upload, export_gltf
 
 
@@ -457,12 +458,72 @@ def test_musicxml_tick_mode_preserves_legacy_quarter_unit_values():
 def test_browser_editor_can_promote_unresolved_regions_without_claiming_automatic_recognition():
     assert 'id="unknown-editor"' in WEB_PAGE
     assert "Promote to note" in WEB_PAGE
-    assert "user_promoted_unknown_region" in WEB_PAGE
-    assert "automatic_recognition_claimed:false" in WEB_PAGE
-    assert "currentScene.unknown_objects=currentScene.unknown_objects.filter(value=>value.id!==item.id)" in WEB_PAGE
-    assert "currentScene.notes.push(note)" in WEB_PAGE
-    assert "currentScene.relations.push({type:'geometrically_assigned_to_staff'" in WEB_PAGE
+    assert "fetch('/api/scene/promote-unknown'" in WEB_PAGE
+    assert "body:JSON.stringify({scene:currentScene,region_id:item.id})" in WEB_PAGE
+    assert "@app.post" not in WEB_PAGE  # HTML payload does not contain server route source
+    assert "automatic_recognition_claimed:false" not in WEB_PAGE  # classification belongs to the server edit operation
 
+
+def test_promote_unknown_region_creates_a_user_added_note_without_mutating_input():
+    scene = {
+        "schema": "scoretwin-scene-0.1",
+        "image": {"width": 100, "height": 80},
+        "staffs": [{
+            "index": 0,
+            "top": 10,
+            "bottom": 50,
+            "lines": [10, 20, 30, 40, 50],
+            "spacing": 10,
+            "barlines": [],
+        }],
+        "notes": [],
+        "unknown_objects": [{
+            "id": "unknown-1",
+            "staff_index": 0,
+            "bbox": [45, 35, 10, 6],
+            "center": [50.0, 38.0],
+            "class": "artifact",
+            "confidence": 0.3,
+            "reason": "non_modeled_mark",
+        }],
+        "primitives": [{
+            "id": "unknown-1",
+            "kind": "unknown_region",
+            "geometry": {"bbox_px": [45, 35, 10, 6]},
+            "uncertainty": ["symbol_identity"],
+        }],
+        "relations": [{
+            "type": "candidate_region_in_staff",
+            "source": "unknown-1",
+            "target": "staff-system-000",
+        }],
+    }
+    original_copy = json.loads(json.dumps(scene))
+    edited = promote_unknown_region(scene, "unknown-1")
+    assert scene == original_copy
+    assert edited["unknown_objects"] == []
+    assert edited["note_count"] == 1
+    note = edited["notes"][0]
+    assert note["id"] == "manual-note-0001"
+    assert note["user_added"] is True
+    assert note["origin_unknown_region_id"] == "unknown-1"
+    assert note["pitch"] == {"step": "G", "octave": 4}
+    assert note["pitch_confidence"] is None
+    assert note["duration_hypothesis"]["used_for_musicxml_duration"] is False
+    primitive = edited["primitives"][0]
+    assert primitive["id"] == note["id"]
+    assert primitive["kind"] == "notehead"
+    assert primitive["provenance"]["automatic_recognition_claimed"] is False
+    assert all(relation["type"] != "candidate_region_in_staff" for relation in edited["relations"])
+    assert any(relation["type"] == "geometrically_assigned_to_staff" for relation in edited["relations"])
+    assert edited["user_edit_history"][-1]["operation"] == "promote_unknown_region"
+
+
+def test_promote_unknown_region_rejects_missing_or_invalid_regions():
+    with pytest.raises(ValueError, match="does not exist"):
+        promote_unknown_region({"schema":"scoretwin-scene-0.1","staffs":[],"unknown_objects":[]}, "missing")
+    with pytest.raises(ValueError, match="schema"):
+        promote_unknown_region({"schema":"wrong"}, "unknown-1")
 
 def test_browser_editor_exposes_accidental_duration_and_voice_controls():
     assert "Accidental for '+note.id" in WEB_PAGE
