@@ -15,6 +15,7 @@ from scoretwin.benchmark import evaluate_perspective_capture, evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
 from scoretwin.benchmark_photo_smoke import evaluate_photo_smoke
 from scoretwin.calibration import evaluate_human_calibration, recommended_study_design
+from scoretwin.capture_quality import diagnose_capture_quality
 from scoretwin.gltf_export import build_gltf, validate_embedded_gltf
 from scoretwin.metrics import binary_mask_metrics, compare_idsr_components, geometry_metrics, mask_attack_sensitivity, measure_bundle_storage, photometric_metrics, relation_metrics, residual_compressibility_metrics
 from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
@@ -34,6 +35,32 @@ def synthetic_staff() -> np.ndarray:
     cv2.line(image, (162, 100), (162, 65), 0, 1, cv2.LINE_AA)
     cv2.line(image, (222, 88), (222, 60), 0, 1, cv2.LINE_AA)
     return image
+
+
+def test_capture_quality_flags_low_contrast_and_blur_without_claiming_calibration():
+    sharp, _truth = generate_synthetic_page(seed=17, staff_count=2, notes_per_staff=9)
+    blurred = cv2.GaussianBlur(sharp, (0, 0), 2.2)
+    low_contrast = np.clip(sharp.astype(np.float32) * 0.05 + 120.0, 0, 255).astype(np.uint8)
+
+    sharp_report = diagnose_capture_quality(sharp)
+    blur_report = diagnose_capture_quality(blurred)
+    contrast_report = diagnose_capture_quality(low_contrast)
+
+    assert sharp_report["thresholds_calibrated"] is False
+    assert sharp_report["metrics"]["normalized_laplacian_variance"] > blur_report["metrics"]["normalized_laplacian_variance"]
+    assert "low_dynamic_range" in {item["code"] for item in contrast_report["advisories"]}
+    assert contrast_report["status"] == "retake_suggested"
+    with pytest.raises(ValueError, match="uint8 grayscale"):
+        diagnose_capture_quality(np.zeros((32, 32, 3), dtype=np.uint8))
+
+
+def test_scene_and_browser_expose_capture_quality_diagnostics():
+    scene = analyze_array(synthetic_staff())
+    assert scene["capture_quality"]["schema"] == "scoretwin-capture-quality-0.1"
+    assert scene["capture_quality"]["thresholds_calibrated"] is False
+    assert scene["capture_diagnostics"]["estimated_staffline_angle_deg"] is not None
+    assert 'id="capture-quality-summary"' in WEB_PAGE
+    assert "qualityAdvisories.map" in WEB_PAGE
 
 
 def test_detects_one_five_line_staff():
