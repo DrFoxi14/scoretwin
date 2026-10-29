@@ -319,6 +319,91 @@ def extract_notehead_candidates(
     for index, candidate in enumerate(kept):
         candidate["id"] = f"proposal-{index:04d}"
     return kept
+
+def refine_notehead_geometry(
+    gray: np.ndarray,
+    binary: np.ndarray,
+    staff_mask: np.ndarray,
+    center: tuple[float, float] | list[float],
+    spacing: float,
+    kind: str,
+    search_fraction: float = 0.35,
+) -> dict:
+    """Refine a proposed notehead center by local template matching.
+
+    The template search is restricted to a small neighborhood around the proposal;
+    it cannot discover missing symbols or repair a bad global assignment. Staff
+    lines are suppressed before scoring to reduce the line's contribution at heads
+    lying on a staff line. The returned fit score is an image-correlation score,
+    not a calibrated probability.
+    """
+    if kind not in {"filled_head", "hollow_head"}:
+        raise ValueError("kind must be filled_head or hollow_head.")
+    if spacing <= 0:
+        raise ValueError("spacing must be positive.")
+
+    clean = cv2.subtract(binary, staff_mask)
+    height, width = gray.shape
+    cx, cy = float(center[0]), float(center[1])
+    search = max(2, int(round(float(search_fraction) * spacing)))
+    rx = max(3, int(round(spacing * 0.58)))
+    ry = max(2, int(round(spacing * 0.36)))
+    pad_x, pad_y = rx + search + 3, ry + search + 3
+    x0, y0 = max(0, int(round(cx)) - pad_x), max(0, int(round(cy)) - pad_y)
+    x1, y1 = min(width, int(round(cx)) + pad_x + 1), min(height, int(round(cy)) + pad_y + 1)
+    region = clean[y0:y1, x0:x1]
+
+    best: tuple[float, tuple[float, float], float, float, float] | None = None
+    for scale in (0.88, 0.94, 1.0, 1.06, 1.12):
+        template_w = max(5, int(round(2 * rx * scale)) + 1)
+        template_h = max(5, int(round(2 * ry * scale)) + 1)
+        for angle in (-30, -20, -10, 0, 10, 20, 30):
+            template = np.zeros((template_h + 4, template_w + 4), dtype=np.uint8)
+            center_xy = (template.shape[1] // 2, template.shape[0] // 2)
+            axes = (max(2, template_w // 2 - 1), max(2, template_h // 2 - 1))
+            thickness = -1 if kind == "filled_head" else max(1, int(round(spacing * 0.12)))
+            cv2.ellipse(template, center_xy, axes, float(angle), 0, 360, 255, thickness)
+            if region.shape[0] < template.shape[0] or region.shape[1] < template.shape[1]:
+                continue
+
+            scores = cv2.matchTemplate(region, template, cv2.TM_CCOEFF_NORMED)
+            match_y, match_x = np.unravel_index(int(np.argmax(scores)), scores.shape)
+            correlation = float(scores[match_y, match_x])
+            found = (
+                x0 + match_x + template.shape[1] / 2.0,
+                y0 + match_y + template.shape[0] / 2.0,
+            )
+            dx, dy = found[0] - cx, found[1] - cy
+            if abs(dx) > search or abs(dy) > search:
+                continue
+            objective = correlation - 0.025 * float(np.hypot(dx, dy)) / spacing
+            if best is None or objective > best[0]:
+                best = (objective, found, correlation, float(scale), float(angle))
+
+    if best is None:
+        return {
+            "center": [round(cx, 3), round(cy, 3)],
+            "accepted": False,
+            "fit_score": None,
+            "shift_px": [0.0, 0.0],
+            "reason": "No template placement was available inside the local search window.",
+        }
+
+    _objective, refined_center, correlation, scale, angle = best
+    shift_x, shift_y = refined_center[0] - cx, refined_center[1] - cy
+    accepted = bool(correlation >= 0.18)
+    final_center = refined_center if accepted else (cx, cy)
+    return {
+        "center": [round(float(final_center[0]), 3), round(float(final_center[1]), 3)],
+        "initial_center": [round(cx, 3), round(cy, 3)],
+        "accepted": accepted,
+        "fit_score": round(correlation, 5),
+        "shift_px": [round(float(shift_x), 3), round(float(shift_y), 3)],
+        "template_scale": scale,
+        "rotation_deg": angle,
+        "reason": None if accepted else "Template correlation was below the acceptance threshold.",
+    }
+
 def staff_step_and_pitch(cy: float, staff: StaffSystem) -> tuple[int, str, int]:
     """Map a notehead center to a diatonic treble-clef pitch proposal."""
     step = int(round((staff.bottom - cy) / (staff.spacing / 2.0)))
