@@ -150,77 +150,161 @@ def extract_notehead_candidates(
     staff_mask: np.ndarray,
     staffs: list[StaffSystem],
 ) -> list[dict]:
-    """Find compact, approximately elliptical components after removing long staff lines."""
+    """Propose notehead centers from line-suppressed connected components.
+
+    Staff lines can cut a notehead into fragments. Narrow components are rejected,
+    and vertically separated fragments with matching horizontal support are joined.
+    The displayed notehead box is a geometry proposal sized relative to staff-space;
+    the original pixels remain the evidence and are preserved separately.
+    """
     if not staffs:
         return []
-    spacings = [staff.spacing for staff in staffs]
-    spacing = float(np.median(spacings))
+    spacing = float(np.median([staff.spacing for staff in staffs]))
     clean = cv2.subtract(binary, staff_mask)
     clean = cv2.morphologyEx(
         clean,
         cv2.MORPH_CLOSE,
         cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
     )
+    count, _labels, stats, centroids = cv2.connectedComponentsWithStats(clean, 8)
 
-    kernel_w = max(5, int(round(spacing * 0.78)))
-    kernel_h = max(3, int(round(spacing * 0.42)))
-    kernel_w += 1 - kernel_w % 2
-    kernel_h += 1 - kernel_h % 2
-    head_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_w, kernel_h))
-    opened = cv2.morphologyEx(clean, cv2.MORPH_OPEN, head_kernel)
-    count, labels, stats, centroids = cv2.connectedComponentsWithStats(opened, 8)
-
-    proposals: list[dict] = []
-    min_area = max(3, int(spacing * spacing * 0.045))
-    max_area = int(spacing * spacing * 2.2)
+    components: list[dict] = []
+    min_area = max(3, int(spacing * spacing * 0.035))
+    max_area = int(spacing * spacing * 3.0)
     for component in range(1, count):
-        x, y, w, h, area = [int(v) for v in stats[component]]
-        cx, cy = [float(v) for v in centroids[component]]
+        x, y, w, h, area = [int(value) for value in stats[component]]
+        cx, cy = [float(value) for value in centroids[component]]
         if area < min_area or area > max_area:
             continue
-        if not (0.38 * spacing <= w <= 2.1 * spacing):
+        if not (0.52 * spacing <= w <= 2.0 * spacing):
             continue
-        if not (0.24 * spacing <= h <= 1.35 * spacing):
+        if not (0.22 * spacing <= h <= 2.1 * spacing):
             continue
-        aspect = w / max(h, 1)
-        if not 0.62 <= aspect <= 3.2:
+        if not (0.45 <= w / max(h, 1) <= 3.8):
             continue
         staff_index = min(
             range(len(staffs)),
-            key=lambda idx: min(abs(cy - staffs[idx].top), abs(cy - staffs[idx].bottom), abs(cy - (staffs[idx].top + staffs[idx].bottom) / 2)),
+            key=lambda idx: min(
+                abs(cy - staffs[idx].top),
+                abs(cy - staffs[idx].bottom),
+                abs(cy - (staffs[idx].top + staffs[idx].bottom) / 2),
+            ),
         )
         staff = staffs[staff_index]
         if cy < staff.top - 2.0 * spacing or cy > staff.bottom + 2.0 * spacing:
             continue
-        pad = max(3, int(round(0.5 * spacing)))
-        x0, y0 = max(0, x - pad), max(0, y - pad)
-        x1, y1 = min(gray.shape[1], x + w + pad), min(gray.shape[0], y + h + pad)
-        crop = gray[y0:y1, x0:x1]
-        proposals.append({
-            "id": f"staff{staff_index}-component{component}",
-            "bbox": [x, y, w, h],
-            "center": [round(cx, 3), round(cy, 3)],
-            "area_px": area,
-            "aspect_ratio": round(aspect, 4),
+        components.append({
+            "box": [x, y, w, h],
+            "center": [cx, cy],
+            "area": area,
             "staff_index": staff_index,
-            "crop": crop,
+            "component_id": component,
         })
 
-    proposals.sort(key=lambda item: (-item["area_px"], item["center"][0], item["center"][1]))
+    # A line crossing can split one head into two wide fragments. Only merge
+    # horizontally aligned components whose bounding boxes have a real vertical gap;
+    # overlapping boxes are kept separate to avoid collapsing close chord tones.
+    used: set[int] = set()
+    merged: list[dict] = []
+    for i, first in enumerate(components):
+        if i in used:
+            continue
+        ax, ay, aw, ah = first["box"]
+        acx, acy = first["center"]
+        best_j: int | None = None
+        best_score: float | None = None
+        for j in range(i + 1, len(components)):
+            if j in used:
+                continue
+            second = components[j]
+            if first["staff_index"] != second["staff_index"]:
+                continue
+            bx, by, bw, bh = second["box"]
+            bcx, bcy = second["center"]
+            horizontal_overlap = max(0, min(ax + aw, bx + bw) - max(ax, bx)) / max(1, min(aw, bw))
+            vertical_gap = max(0, max(ay, by) - min(ay + ah, by + bh))
+            dx = abs(acx - bcx)
+            dy = abs(acy - bcy)
+            if (
+                horizontal_overlap >= 0.65
+                and dx < 0.38 * spacing
+                and 0.22 * spacing < dy < 1.15 * spacing
+                and 0 < vertical_gap <= 0.42 * spacing
+            ):
+                score = dx / spacing + vertical_gap / spacing
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_j = j
+
+        if best_j is not None:
+            second = components[best_j]
+            total_area = first["area"] + second["area"]
+            center_x = (
+                first["center"][0] * first["area"] + second["center"][0] * second["area"]
+            ) / total_area
+            center_y = (
+                first["center"][1] * first["area"] + second["center"][1] * second["area"]
+            ) / total_area
+            merged.append({
+                "center": [center_x, center_y],
+                "area": total_area,
+                "staff_index": first["staff_index"],
+                "source_boxes": [first["box"], second["box"]],
+            })
+            used.update((i, best_j))
+
+    for i, component in enumerate(components):
+        if i in used:
+            continue
+        merged.append({
+            "center": component["center"],
+            "area": component["area"],
+            "staff_index": component["staff_index"],
+            "source_boxes": [component["box"]],
+        })
+
+    proposals: list[dict] = []
+    head_width = max(5, int(round(1.16 * spacing)))
+    head_height = max(3, int(round(0.76 * spacing)))
+    crop_half_width = max(5, int(round(1.1 * spacing)))
+    crop_half_height = max(5, int(round(0.9 * spacing)))
+    for item in merged:
+        cx, cy = item["center"]
+        x = max(0, int(round(cx - head_width / 2)))
+        y = max(0, int(round(cy - head_height / 2)))
+        x1 = min(gray.shape[1], x + head_width)
+        y1 = min(gray.shape[0], y + head_height)
+        cx_int, cy_int = int(round(cx)), int(round(cy))
+        x0 = max(0, cx_int - crop_half_width)
+        y0 = max(0, cy_int - crop_half_height)
+        crop_x1 = min(gray.shape[1], cx_int + crop_half_width + 1)
+        crop_y1 = min(gray.shape[0], cy_int + crop_half_height + 1)
+        aspect = head_width / max(head_height, 1)
+        proposals.append({
+            "bbox": [x, y, x1 - x, y1 - y],
+            "center": [round(cx, 3), round(cy, 3)],
+            "area_px": int(item["area"]),
+            "aspect_ratio": round(aspect, 4),
+            "staff_index": int(item["staff_index"]),
+            "source_component_boxes": item["source_boxes"],
+            "crop": gray[y0:crop_y1, x0:crop_x1],
+        })
+
+    proposals.sort(key=lambda item: (item["staff_index"], item["center"][0], item["center"][1]))
     kept: list[dict] = []
     for candidate in proposals:
         cx, cy = candidate["center"]
         if any(
-            np.hypot(cx - old["center"][0], cy - old["center"][1]) < 0.42 * spacing
+            candidate["staff_index"] == old["staff_index"]
+            and np.hypot(cx - old["center"][0], cy - old["center"][1]) < 0.4 * spacing
             for old in kept
         ):
             continue
         kept.append(candidate)
-    kept.sort(key=lambda item: (item["staff_index"], item["center"][0]))
+
     for index, candidate in enumerate(kept):
         candidate["id"] = f"proposal-{index:04d}"
     return kept
-
 
 def staff_step_and_pitch(cy: float, staff: StaffSystem) -> tuple[int, str, int]:
     """Map a notehead center to a diatonic treble-clef pitch proposal."""
