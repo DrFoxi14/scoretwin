@@ -784,6 +784,80 @@ def test_gltf_export_rejects_nonfinite_geometry_and_bad_scenes():
         build_gltf({"schema": "wrong", "image": {"width": 1, "height": 1}})
 
 
+def test_browser_analysis_validates_and_preserves_live_burst_metadata():
+    image = synthetic_staff()
+    ok, encoded = cv2.imencode(".png", image)
+    assert ok
+
+    class MemoryUpload:
+        filename = "burst-best.jpg"
+
+        async def read(self) -> bytes:
+            return encoded.tobytes()
+
+    metadata = {
+        "method": "live_camera_burst_best_single_frame",
+        "frames_requested": 3,
+        "frames_encoded": 2,
+        "selection_metric": "client-supplied-this-is-ignored",
+        "selection_metric_calibrated": False,
+        "frame_scores": [
+            {"rank": 1, "contrast": 41.2, "edge_energy": 3.2, "selection_score": 3.2, "width_px": 440, "height_px": 250},
+            {"rank": 2, "contrast": 39.1, "edge_energy": 2.7, "selection_score": 2.7, "width_px": 440, "height_px": 250},
+        ],
+        "selected_width_px": 440,
+        "selected_height_px": 250,
+        "fusion_performed": False,
+    }
+    result = asyncio.run(analyze_web_upload(
+        MemoryUpload(),
+        page=0,
+        corners_json=None,
+        capture_metadata_json=json.dumps(metadata),
+    ))
+    captured = result["source"]["browser_capture"]
+    assert captured["method"] == "live_camera_burst_best_single_frame"
+    assert captured["frames_requested"] == 3
+    assert captured["frames_encoded"] == 2
+    assert captured["selection_metric_calibrated"] is False
+    assert captured["frame_scores"][0]["edge_energy"] == pytest.approx(3.2)
+    assert captured["fusion_performed"] is False
+    assert "client-reported" in captured["provenance"]
+    assert result["summary"]["browser_capture_method"] == captured["method"]
+    assert "frame.score.edge_energy" in WEB_PAGE
+    assert "frames_requested:3" in WEB_PAGE
+    assert "fusion_performed:false" in WEB_PAGE
+    assert "capture_metadata_json',JSON.stringify(liveCaptureMetadata)" in WEB_PAGE
+
+
+def test_browser_analysis_rejects_malformed_live_burst_metadata():
+    image = synthetic_staff()
+    ok, encoded = cv2.imencode(".png", image)
+    assert ok
+
+    class MemoryUpload:
+        filename = "burst-best.jpg"
+
+        async def read(self) -> bytes:
+            return encoded.tobytes()
+
+    invalid = {
+        "method": "pretend_super_resolution",
+        "frames_requested": 3,
+        "frames_encoded": 1,
+        "frame_scores": [{"rank":1,"contrast":1,"edge_energy":1,"selection_score":1,"width_px":440,"height_px":250}],
+        "selected_width_px": 440,
+        "selected_height_px": 250,
+    }
+    with pytest.raises(Exception, match="Unknown browser capture method"):
+        asyncio.run(analyze_web_upload(
+            MemoryUpload(),
+            page=0,
+            corners_json=None,
+            capture_metadata_json=json.dumps(invalid),
+        ))
+
+
 def test_browser_analysis_preserves_color_channels_in_residual_download():
     gray = synthetic_staff()
     color_bgr = np.stack([
