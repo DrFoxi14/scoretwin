@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 
 from scoretwin.benchmark import evaluate_synthetic
-from scoretwin.imaging import detect_staff_systems, extract_notehead_candidates, refine_notehead_geometry, staff_step_and_pitch
+from scoretwin.imaging import detect_staff_systems, estimate_global_skew_degrees, extract_notehead_candidates, refine_notehead_geometry, staff_step_and_pitch
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import analyze_array, process_file
 from scoretwin.proposal import predict_patch, train_proposal_model
@@ -68,6 +68,18 @@ def test_local_template_refinement_reduces_synthetic_center_error():
 
     assert len(errors_before) == 18
     assert float(np.mean(errors_after)) < 0.7 * float(np.mean(errors_before))
+
+
+def test_skew_diagnostic_flags_a_rotated_synthetic_page():
+    gray, _truth = generate_synthetic_page(seed=3, staff_count=2, notes_per_staff=9)
+    assert abs(estimate_global_skew_degrees(gray) or 0.0) < 0.5
+
+    height, width = gray.shape
+    matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), 3.0, 1.0)
+    rotated = cv2.warpAffine(gray, matrix, (width, height), borderValue=255)
+    angle = estimate_global_skew_degrees(rotated)
+    assert angle is not None
+    assert abs(angle) >= 2.4
 
 
 def test_pitch_mapping_uses_treble_bottom_line_e4():

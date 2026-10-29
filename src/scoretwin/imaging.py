@@ -68,6 +68,56 @@ def binarize(gray: np.ndarray) -> np.ndarray:
     return cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
 
 
+
+def estimate_global_skew_degrees(gray: np.ndarray) -> float | None:
+    """Estimate the dominant near-horizontal line angle using probabilistic Hough.
+
+    The returned angle is the observed staff-line angle in the image, not a
+    correction matrix. It is a diagnostic only; the current detector does not
+    deskew or rectify the source image.
+    """
+    binary = binarize(gray)
+    height, width = binary.shape
+    scale = min(1.0, 1600.0 / max(height, width))
+    if scale < 1.0:
+        binary = cv2.resize(
+            binary,
+            (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
+            interpolation=cv2.INTER_NEAREST,
+        )
+    scaled_height, scaled_width = binary.shape
+    lines = cv2.HoughLinesP(
+        binary,
+        rho=1,
+        theta=np.pi / 1800.0,
+        threshold=max(25, int(scaled_width * 0.08)),
+        minLineLength=max(40, int(scaled_width * 0.12)),
+        maxLineGap=max(10, int(scaled_width * 0.03)),
+    )
+    if lines is None:
+        return None
+
+    observations: list[tuple[float, float]] = []
+    min_length = scaled_width * 0.12
+    for line in lines[:, 0, :]:
+        x0, y0, x1, y1 = [int(value) for value in line]
+        dx, dy = x1 - x0, y1 - y0
+        length = float(np.hypot(dx, dy))
+        angle = float(np.degrees(np.arctan2(dy, dx)))
+        if length >= min_length and abs(angle) <= 15.0:
+            observations.append((angle, length))
+    if not observations:
+        return None
+
+    observations.sort(key=lambda item: item[0])
+    half_length = sum(length for _, length in observations) / 2.0
+    cumulative = 0.0
+    for angle, length in observations:
+        cumulative += length
+        if cumulative >= half_length:
+            return round(angle, 3)
+    return round(observations[-1][0], 3)
+
 def _merge_active_rows(active: np.ndarray, counts: np.ndarray, max_gap: int = 2) -> list[int]:
     indices = np.flatnonzero(active)
     if len(indices) == 0:

@@ -10,7 +10,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .imaging import detect_barlines, detect_staff_systems, extract_notehead_candidates, load_grayscale, refine_notehead_geometry, staff_step_and_pitch
+from .imaging import detect_barlines, detect_staff_systems, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, refine_notehead_geometry, staff_step_and_pitch
 from .musicxml import build_musicxml
 from .proposal import get_default_model, load_model, predict_patch
 
@@ -35,6 +35,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
     if min(gray.shape) < 32:
         raise ValueError("Input image is too small to contain a score page.")
     started = time.perf_counter()
+    estimated_skew = estimate_global_skew_degrees(gray)
     staffs, binary, staff_mask = detect_staff_systems(gray)
     candidates = extract_notehead_candidates(gray, binary, staff_mask, staffs)
     classified = _classify_candidates(candidates, model or get_default_model())
@@ -237,6 +238,10 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             relations.append({"type": "candidate_region_in_staff", "source": item["id"], "target": system_id})
 
     warnings = []
+    if estimated_skew is not None and abs(estimated_skew) > 0.75:
+        warnings.append(
+            f"Estimated staff-line tilt is {estimated_skew:.2f} degrees; this version does not rectify rotation or perspective."
+        )
     if not staffs:
         warnings.append("No five-line staff group detected. Preserve the source and review the page manually.")
     if not notes:
@@ -250,6 +255,11 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
     return {
         "schema": "scoretwin-scene-0.1",
         "image": {"width": int(gray.shape[1]), "height": int(gray.shape[0])},
+        "capture_diagnostics": {
+            "estimated_staffline_angle_deg": estimated_skew,
+            "rotation_rectified": False,
+            "perspective_rectified": False,
+        },
         "staffs": staff_objects,
         "primitives": primitives,
         "relations": relations,

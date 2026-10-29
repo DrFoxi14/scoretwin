@@ -7,7 +7,7 @@ ScoreTwin is the active implementation workspace for Identity-preserving Digital
 This repository contains a runnable research prototype:
 
 - image and PDF ingestion;
-- five-line staff detection;
+- five-line staff detection with a global-skew warning (rotation/perspective rectification is not yet applied);
 - notehead proposals that attempt to reconstruct fragments cut by staff lines, followed by a bounded local template-fit refinement;
 - a small synthetic patch classifier, trainable locally;
 - a provenance-aware geometry graph (staff systems, staff lines, barlines, notehead proposals, unknown regions and typed relations) with pixel coordinates and uncertainty flags;
