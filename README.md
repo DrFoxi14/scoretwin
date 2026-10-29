@@ -124,10 +124,22 @@ For hand-annotated scene JSON, MusicXML export accepts note fields `chord_id`, `
 
 [MĂSURAT] This pilot used Python 3.9.6, NumPy 1.22.0 and OpenCV 5.0.0, outside declared project constraints. The result shows what exact manual corners can recover in this simulator; it gives no evidence about incorrect user taps, a curled page, phone ISP, actual photographs, or symbolic transcription quality.
 
+## Real-page ingestion smoke test
+
+[DEMONSTRAT PRIN CONSTRUCȚIE] A PDF page is read at the embedded image's native resolution only when it contains one axis-aligned raster covering the page, has no text or vector drawings, and its page/image aspect ratios agree within 1%. Other PDFs keep the normal DPI renderer. This avoids magnifying a scan merely because its PDF uses pixel-sized page units. The falsifier is a PDF satisfying those checks whose extracted raster differs in orientation, samples, or content from its intended page image.
+
+[MĂSURAT — unit test] One synthetic grayscale page embedded full-bleed in a PDF was loaded with a requested 300 DPI; the loader returned the original dimensions and byte-identical grayscale samples (N=1 page). The conventional Wilson 95% interval for a one-trial pass is [0.207, 1.000], so this test only verifies the code path, not all PDF encodings. See `test_image_only_pdf_uses_native_page_raster_without_dpi_upsampling`.
+
+[MĂSURAT — smoke, no labels] The local run used three selected scan-PDF pages associated with pair IDs 97 and 106 (`pair-97/page-0`, `pair-106/page-0`, `pair-106/page-1`); the matching vector PDFs were not used for ground truth. All three original PDF files passed byte-hash preservation checks (3/3; Wilson 95% interval [0.439, 1.000]). Staff groups were detected on 2/3 pages, a page-level rate of 0.667 (Wilson 95% CI [0.208, 0.939]); notehead proposals were present on the same 2/3 pages. The per-page notehead proposal counts were 0, 5, and 40, with detected staff counts 0, 1, and 5. This sample was selected for a smoke test, not sampled randomly. Its intervals describe the selected page outcomes under a binomial model and do not estimate performance on a wider population.
+
+[MĂSURAT — runtime only] End-to-end bundle times on Python 3.9.6, NumPy 1.22.0, OpenCV 5.0.0, macOS 27.0.1 arm64 were 0.414, 0.426, and 0.461 seconds; mean 0.434 seconds/page (2,000 page-bootstrap draws, seed 20261029, 95% CI [0.414, 0.461]). The runtime excludes user image selection and upload. The environment is outside the project's declared Python, NumPy, and OpenCV ranges.
+
+[MĂSURAT — limită] These PDFs have no independent notehead-center labels in this run, so precision, recall, pitch accuracy, and DID are uncomputed. The zero-staff result on pair 97 and one-staff result on pair 106 page 0 are visible failures, not successful reconstructions. The report records only hashes and measurements; it does not copy the private pages into the repository. Reproduce with `scoretwin evaluate-photo-smoke --manifest <local-manifest.json> --out <report.json>` using schema `scoretwin-photo-smoke-v1`. See [the saved summary](results/real-photo-smoke-2026-10-29.json).
+
 ## Next gates
 
 1. Keep the synthetic regression benchmark deterministic and report precision/recall rather than only file creation.
-2. Measure notehead precision/recall on registered real photographs.
+2. Add independent annotations for registered real photographs; the current smoke run tests ingestion and exposes failures but cannot score accuracy.
 3. Add stem, beam, accidental and duration hypotheses with explicit user correction.
 4. Train or retain a proposal model only if it beats a simpler baseline on real pages.
 5. Add DID and MDL only after testing metrics against adversarial manipulations and human judgments.
