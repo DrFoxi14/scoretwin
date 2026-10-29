@@ -8,6 +8,7 @@ understanding. The held-out score measures only synthetic patch classification.
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import cv2
 import numpy as np
@@ -131,25 +132,36 @@ def train_proposal_model(
         "synthetic_holdout_accuracy": accuracy,
         "epochs": epochs,
     }
-    return {"weights": weights, "labels": LABELS}, metrics
+    return {"weights": weights, "labels": LABELS, "training_metrics": metrics}, metrics
 
 
 def save_model(model: dict, path: str | Path) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(output, weights=np.asarray(model["weights"], dtype=np.float32),
-                        labels=np.asarray(model["labels"], dtype=str))
+    metadata = model.get("training_metrics", {})
+    np.savez_compressed(
+        output,
+        weights=np.asarray(model["weights"], dtype=np.float32),
+        labels=np.asarray(model["labels"], dtype=str),
+        metadata_json=np.asarray(json.dumps(metadata, sort_keys=True), dtype=np.str_),
+    )
 
 
 def load_model(path: str | Path) -> dict:
     with np.load(Path(path), allow_pickle=False) as data:
         labels = tuple(str(item) for item in data["labels"].tolist())
         weights = np.asarray(data["weights"], dtype=np.float32)
+        metadata = {}
+        if "metadata_json" in data.files:
+            try:
+                metadata = json.loads(str(data["metadata_json"].item()))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                metadata = {}
     if weights.shape != (FEATURE_SIZE * FEATURE_SIZE + 1, len(labels)):
         raise ValueError("Proposal model has an incompatible weight shape.")
     if labels != LABELS:
         raise ValueError("Proposal model labels do not match this implementation.")
-    return {"weights": weights, "labels": labels}
+    return {"weights": weights, "labels": labels, "training_metrics": metadata}
 
 
 def predict_patch(model: dict, gray_crop: np.ndarray) -> dict:
