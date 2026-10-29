@@ -32,7 +32,7 @@ def _bootstrap_intervals(
     if samples < 100:
         raise ValueError("bootstrap_samples must be at least 100.")
     rng = np.random.default_rng(seed)
-    names = ("precision", "recall", "f1")
+    names = ("precision", "recall", "f1", "mean_center_error_sp", "p95_center_error_sp")
     values = {name: [] for name in names}
     for _ in range(samples):
         selected = [pages[int(i)] for i in rng.integers(0, len(pages), size=len(pages))]
@@ -43,16 +43,33 @@ def _bootstrap_intervals(
         values["precision"].append(precision)
         values["recall"].append(recall)
         values["f1"].append(f1)
-    return {
-        name: {
-            "lower_95": float(np.quantile(metric_values, 0.025)),
-            "upper_95": float(np.quantile(metric_values, 0.975)),
-            "bootstrap_samples": samples,
+        error_values = [
+            float(value)
+            for page in selected
+            for value in page.get("center_error_sp_values", [])
+        ]
+        values["mean_center_error_sp"].append(
+            float(np.mean(error_values)) if error_values else None
+        )
+        values["p95_center_error_sp"].append(
+            float(np.percentile(error_values, 95)) if error_values else None
+        )
+
+    intervals = {}
+    for name, metric_values in values.items():
+        valid = np.asarray(
+            [value for value in metric_values if value is not None and np.isfinite(value)],
+            dtype=float,
+        )
+        intervals[name] = {
+            "lower_95": float(np.quantile(valid, 0.025)) if len(valid) else None,
+            "upper_95": float(np.quantile(valid, 0.975)) if len(valid) else None,
+            "bootstrap_samples_requested": samples,
+            "bootstrap_samples_valid": int(len(valid)),
             "bootstrap_seed": seed,
             "resampling_unit": "page",
         }
-        for name, metric_values in values.items()
-    }
+    return intervals
 
 
 def evaluate_manifest(
@@ -99,6 +116,7 @@ def evaluate_manifest(
     model = load_model(model_path) if model_path is not None else None
     per_page: list[dict] = []
     all_center_errors: list[float] = []
+    all_center_errors_sp: list[float] = []
     pitch_correct = 0
     pitch_total = 0
     total_truth = 0
@@ -142,8 +160,10 @@ def evaluate_manifest(
         page_pitch_correct = 0
         page_pitch_total = 0
         center_errors = []
+        center_errors_sp = []
         for truth_index, predicted_index, distance in matches:
             center_errors.append(float(distance))
+            center_errors_sp.append(float(distance) / spacing_px)
             truth_pitch = truth[truth_index].get("pitch")
             if truth_pitch is not None:
                 page_pitch_total += 1
@@ -176,6 +196,9 @@ def evaluate_manifest(
             ),
             "mean_center_error_px": float(np.mean(center_errors)) if center_errors else None,
             "p95_center_error_px": float(np.percentile(center_errors, 95)) if center_errors else None,
+            "mean_center_error_staff_spaces": float(np.mean(center_errors_sp)) if center_errors_sp else None,
+            "p95_center_error_staff_spaces": float(np.percentile(center_errors_sp, 95)) if center_errors_sp else None,
+            "center_error_sp_values": center_errors_sp,
             "runtime_seconds": scene["runtime_seconds"],
             "capture_diagnostics": scene.get("capture_diagnostics", {}),
             "warnings": scene["warnings"],
@@ -183,6 +206,7 @@ def evaluate_manifest(
         total_truth += len(truth)
         total_proposed += len(predicted)
         all_center_errors.extend(center_errors)
+        all_center_errors_sp.extend(center_errors_sp)
         pitch_correct += page_pitch_correct
         pitch_total += page_pitch_total
 
@@ -211,6 +235,8 @@ def evaluate_manifest(
         "pitch_accuracy_on_labelled_matches": pitch_correct / pitch_total if pitch_total else None,
         "mean_center_error_px": float(np.mean(all_center_errors)) if all_center_errors else None,
         "p95_center_error_px": float(np.percentile(all_center_errors, 95)) if all_center_errors else None,
+        "mean_center_error_staff_spaces": float(np.mean(all_center_errors_sp)) if all_center_errors_sp else None,
+        "p95_center_error_staff_spaces": float(np.percentile(all_center_errors_sp, 95)) if all_center_errors_sp else None,
         "tolerance_staff_spaces": tolerance_staff_spaces,
         "software": {
             "scoretwin": __version__,
