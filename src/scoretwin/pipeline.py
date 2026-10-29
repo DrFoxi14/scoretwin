@@ -599,7 +599,10 @@ def process_file(
             "rectification": rectification.to_dict(),
         }, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    gltf_text = build_gltf(scene)
+    texture_ok, texture_encoded = cv2.imencode(".png", analysis_gray)
+    if not texture_ok:
+        raise RuntimeError("Could not encode the analysis raster for the 3D scene texture.")
+    gltf_text = build_gltf(scene, background_png=texture_encoded.tobytes())
     gltf_validation = validate_embedded_gltf(gltf_text)
     gltf_path = output / "scene.gltf"
     gltf_path.write_text(gltf_text, encoding="utf-8")
