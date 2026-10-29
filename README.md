@@ -36,6 +36,10 @@ Evaluate notehead proposals on generated pages, with exact synthetic notehead-ce
 
     scoretwin evaluate-synthetic --pages 100 --seed 20261029 --noise-sigma 2 --blur-sigma 0.35 --contract-staff-spaces 0.3 --out ./results/synthetic-capture-pilot-2026-10-29.json
 
+Compare a clean synthetic source page, its projective camera simulation, and correction using exact page corners:
+
+    scoretwin evaluate-perspective --pages 100 --seed 20261029 --noise-sigma 2 --blur-sigma 0.35 --contract-staff-spaces 0.3 --out ./results/perspective-capture-pilot-2026-10-29.json
+
 Evaluate a separately annotated manifest (the command does not manufacture ground truth):
 
     scoretwin evaluate-manifest --manifest ./data/manifest.json --out ./results/real-evaluation.json
@@ -109,6 +113,16 @@ For hand-annotated scene JSON, MusicXML export accepts note fields `chord_id`, `
 [IPOTEZĂ] The synthetic proposal and refinement may transfer to registered score photographs. A falsifying test is a held-out set of real photographs with independently prepared notehead-center annotations and per-page precision, recall, F1 and staff-space localization confidence intervals.
 
 [MĂSURAT] The run used Python 3.9.6, NumPy 1.22.0 and OpenCV 5.0.0. The project requires Python ≥3.11, NumPy ≥1.26 and OpenCV ≥4.9,<5; the JSON records that this environment does not meet those constraints. Treat the result and latency as exploratory until rerun on supported dependencies and confirmed by CI.
+
+## Registered perspective-capture pilot
+
+[MĂSURAT — paired synthetic only] The checked-in run used 100 synthetic source pages with two staffs and 18 noteheads each, seeds 20261029–20261128, grayscale noise σ=2 and blur σ=0.35 px. Each page was warped by a known planar homography. The corrected view was given the exact four generated page corners; this excludes automatic corner-detection error. The JSON stores per-page raster hashes, corners, and both homographies. The run is not a real-camera or real-manuscript test, and its score is not IDSR DID.
+
+[MĂSURAT — paired synthetic only] The source-reference view detected 2 staffs on all 100 pages and scored micro F1 0.9967 (macro page F1 0.9966, page-bootstrap 95% CI 0.9939–0.9986). The uncorrected projective view detected 0 staffs and proposed 0 noteheads on all 100 pages (0/100; Wilson 95% upper bound 3.7%). With exact-corner correction, 2 staffs were detected on all pages; notehead micro F1 was 0.8039, with recall 0.7378 and precision 0.8830. Macro page F1 was 0.7968 (95% CI 0.7710–0.8216). Mean page p95 center error was 0.0993 staff spaces (95% CI 0.0953–0.1034), conditional on matched noteheads; every page met that conditional ≤0.3-space threshold. False negatives and false positives remain separate: 472 missed and 176 extra proposals across 100 pages.
+
+[IPOTEZĂ] The uncorrected failure is caused by the staff detector's near-horizontal morphology assumption: projective line slope prevents its horizontal opening kernel from retaining staff lines. Falsify this with a sweep over known page tilts and keystone levels, 100 seeds per level, and report staff-detection rate before and after correction. The checked-in per-page report records the 0/100 staff detections but does not isolate the causal image-processing operation.
+
+[MĂSURAT] This pilot used Python 3.9.6, NumPy 1.22.0 and OpenCV 5.0.0, outside declared project constraints. The result shows what exact manual corners can recover in this simulator; it gives no evidence about incorrect user taps, a curled page, phone ISP, actual photographs, or symbolic transcription quality.
 
 ## Next gates
 

@@ -17,7 +17,7 @@ import numpy as np
 import PIL
 
 from . import __version__
-from .imaging import detect_staff_systems
+from .imaging import detect_staff_systems, rectify_page_quadrilateral, transform_points_xy
 from .pipeline import analyze_array
 from .proposal import get_default_model, get_default_model_metrics
 from .synthetic import generate_synthetic_page
@@ -283,4 +283,215 @@ def evaluate_synthetic(
         },
         "proposal_model_training_metrics": model_metrics,
         "per_page": per_page,
+    }
+
+
+def evaluate_perspective_capture(
+    pages: int = 20,
+    seed: int = 20261029,
+    staff_count: int = 2,
+    notes_per_staff: int = 9,
+    spacing: int = 16,
+    noise_sigma: float = 2.0,
+    blur_sigma: float = 0.35,
+    contract_staff_spaces: float = 0.3,
+    bootstrap_rounds: int = 2000,
+) -> dict:
+    """Compare OMR before and after known-corner planar perspective correction.
+
+    Each generated score has a paired projective capture. The exact page corners
+    are supplied to the correction, so this measures rectification given correct
+    corners; it does not measure automatic corner detection, real camera physics,
+    page curl, or IDSR DID.
+    """
+    if pages < 1:
+        raise ValueError("pages must be at least 1.")
+    if staff_count < 1 or notes_per_staff < 1 or spacing < 8:
+        raise ValueError("staff_count, notes_per_staff, and spacing must be valid positive values.")
+    if noise_sigma < 0 or blur_sigma < 0 or contract_staff_spaces <= 0:
+        raise ValueError("Noise and blur must be non-negative and the localization tolerance positive.")
+    if bootstrap_rounds < 100:
+        raise ValueError("bootstrap_rounds must be at least 100.")
+
+    setup_started = time.perf_counter()
+    model = get_default_model()
+    model_setup_seconds = time.perf_counter() - setup_started
+    model_hash = hashlib.sha256(np.asarray(model["weights"], dtype=np.float32).tobytes()).hexdigest()
+    modes: dict[str, list[dict]] = {
+        "source_reference": [],
+        "projective_capture": [],
+        "known_corner_rectified": [],
+    }
+    capture_pairs: list[dict] = []
+    rng = np.random.default_rng(seed + 72_019)
+
+    for page_index in range(pages):
+        page_seed = seed + page_index
+        source, truth = generate_synthetic_page(
+            seed=page_seed,
+            staff_count=staff_count,
+            notes_per_staff=notes_per_staff,
+            spacing=spacing,
+            noise_sigma=noise_sigma,
+            blur_sigma=blur_sigma,
+        )
+        height, width = source.shape
+        source_corners = np.asarray(
+            [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+            dtype=np.float32,
+        )
+        jitter = rng.uniform(-8.0, 8.0, size=(4, 2))
+        photo_corners = np.asarray(
+            [
+                [50, 25],
+                [width + 30, 75],
+                [width + 55, height + 65],
+                [20, height + 20],
+            ],
+            dtype=np.float32,
+        ) + jitter.astype(np.float32)
+        photo_width = width + 120
+        photo_height = height + 100
+        source_to_photo = cv2.getPerspectiveTransform(source_corners, photo_corners)
+        photo = cv2.warpPerspective(
+            source,
+            source_to_photo,
+            (photo_width, photo_height),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=255,
+        )
+        rectification = rectify_page_quadrilateral(photo, photo_corners)
+        photo_to_source = np.linalg.inv(source_to_photo)
+        rectified_to_source = photo_to_source @ rectification.rectified_to_source
+        capture_pairs.append({
+            "seed": page_seed,
+            "source_raster_sha256": hashlib.sha256(source.tobytes()).hexdigest(),
+            "projective_raster_sha256": hashlib.sha256(photo.tobytes()).hexdigest(),
+            "rectified_raster_sha256": hashlib.sha256(rectification.image.tobytes()).hexdigest(),
+            "source_shape_px": list(source.shape),
+            "projective_shape_px": list(photo.shape),
+            "rectified_shape_px": list(rectification.image.shape),
+            "projective_page_corners_xy": photo_corners.tolist(),
+            "source_to_projective_homography": source_to_photo.tolist(),
+            "projective_to_rectified_homography": rectification.source_to_rectified.tolist(),
+        })
+
+        for mode_name, image, analysis_to_source in (
+            ("source_reference", source, np.eye(3, dtype=np.float64)),
+            ("projective_capture", photo, photo_to_source),
+            ("known_corner_rectified", rectification.image, rectified_to_source),
+        ):
+            started = time.perf_counter()
+            scene = analyze_array(image, model=model)
+            runtime_seconds = time.perf_counter() - started
+            predictions = []
+            for item in scene["notes"]:
+                transformed_center = transform_points_xy([item["center"]], analysis_to_source)[0]
+                predictions.append({**item, "center": transformed_center.tolist()})
+            matches = _match_notes(
+                truth,
+                predictions,
+                tolerance_px=contract_staff_spaces * float(spacing),
+            )
+            errors_px = [distance for _, _, distance in matches]
+            errors_sp = [distance / float(spacing) for distance in errors_px]
+            p95_error_sp = _percentile(errors_sp, 0.95)
+            tp = len(matches)
+            precision = tp / len(predictions) if predictions else 0.0
+            recall = tp / len(truth) if truth else 0.0
+            pitch_correct = sum(
+                truth[truth_index]["pitch"] == predictions[predicted_index]["pitch"]
+                for truth_index, predicted_index, _distance in matches
+            )
+            modes[mode_name].append({
+                "seed": page_seed,
+                "ground_truth_noteheads": len(truth),
+                "proposed_noteheads": len(predictions),
+                "true_positive": tp,
+                "false_positive": len(predictions) - tp,
+                "false_negative": len(truth) - tp,
+                "precision": precision,
+                "recall": recall,
+                "f1": _f1(precision, recall),
+                "pitch_accuracy_on_matches": pitch_correct / tp if tp else None,
+                "mean_center_error_staff_spaces": statistics.mean(errors_sp) if errors_sp else None,
+                "p95_center_error_staff_spaces": p95_error_sp,
+                "localization_contract_pass": p95_error_sp is not None
+                and p95_error_sp <= contract_staff_spaces,
+                "runtime_seconds": runtime_seconds,
+                "staffs_detected": len(scene["staffs"]),
+            })
+
+    summaries = {}
+    for mode_index, (mode_name, rows) in enumerate(modes.items()):
+        total_tp = sum(row["true_positive"] for row in rows)
+        total_predicted = sum(row["proposed_noteheads"] for row in rows)
+        total_truth = sum(row["ground_truth_noteheads"] for row in rows)
+        page_p95 = [row["p95_center_error_staff_spaces"] for row in rows if row["p95_center_error_staff_spaces"] is not None]
+        localization_passes = sum(row["localization_contract_pass"] for row in rows)
+        staff_detected_pages = sum(row["staffs_detected"] > 0 for row in rows)
+        summaries[mode_name] = {
+            "pages_n": pages,
+            "pages_with_any_staff_detected": staff_detected_pages,
+            "page_staff_detection_rate_ci95_wilson": _wilson_ci(staff_detected_pages, pages, 0.95),
+            "true_positive": total_tp,
+            "proposed_noteheads": total_predicted,
+            "ground_truth_noteheads": total_truth,
+            "micro_precision": total_tp / total_predicted if total_predicted else 0.0,
+            "micro_recall": total_tp / total_truth if total_truth else 0.0,
+            "micro_f1": _f1(
+                total_tp / total_predicted if total_predicted else 0.0,
+                total_tp / total_truth if total_truth else 0.0,
+            ),
+            "macro_page_f1": statistics.mean(row["f1"] for row in rows),
+            "macro_page_f1_ci95_bootstrap": _bootstrap_mean_ci(
+                [row["f1"] for row in rows], seed + 72_100 + mode_index, bootstrap_rounds, 0.95
+            ),
+            "mean_page_p95_center_error_staff_spaces": statistics.mean(page_p95) if page_p95 else None,
+            "mean_page_p95_center_error_staff_spaces_ci95_bootstrap": _bootstrap_mean_ci(
+                page_p95, seed + 72_200 + mode_index, bootstrap_rounds, 0.95
+            ),
+            "pages_p95_at_or_below_contract": localization_passes,
+            "page_localization_pass_rate_ci95_wilson": _wilson_ci(localization_passes, pages, 0.95),
+            "mean_runtime_seconds_per_page": statistics.mean(row["runtime_seconds"] for row in rows),
+        }
+
+    return {
+        "benchmark": "synthetic-registered-perspective-capture-v1",
+        "epistemic_status": "MĂSURAT — paired synthetic projective captures only; exact corners supplied",
+        "data_status": "synthetic_registered_pairs_no_real_photographs",
+        "not_did": True,
+        "protocol": {
+            "seed_start": seed,
+            "seed_end": seed + pages - 1,
+            "pages": pages,
+            "staff_count_per_page": staff_count,
+            "notes_per_staff": notes_per_staff,
+            "staff_spacing_px": spacing,
+            "noise_sigma_grayscale": float(noise_sigma),
+            "blur_sigma_pixels": float(blur_sigma),
+            "matching_tolerance_staff_spaces": float(contract_staff_spaces),
+            "bootstrap_unit": "page",
+            "bootstrap_rounds": bootstrap_rounds,
+            "confidence_level": 0.95,
+            "corner_ground_truth": "exact page quadrilateral from the known projective transform",
+            "corner_jitter_distribution_px": "independent uniform [-8, 8] on each coordinate, RNG seed=seed+72019",
+            "corner_order": "top-left, top-right, bottom-right, bottom-left",
+            "rectification_interpolation": "opencv_inter_linear",
+        },
+        "proposal_model": {
+            "sha256_weights": model_hash,
+            "training": get_default_model_metrics(),
+        },
+        "measurements": summaries,
+        "per_page": modes,
+        "capture_pairs": capture_pairs,
+        "software": {
+            "scoretwin": __version__,
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "numpy": np.__version__,
+            "opencv": cv2.__version__,
+        },
     }

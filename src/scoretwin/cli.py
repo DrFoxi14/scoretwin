@@ -9,7 +9,7 @@ from pathlib import Path
 
 import cv2
 
-from .benchmark import evaluate_synthetic
+from .benchmark import evaluate_perspective_capture, evaluate_synthetic
 from .benchmark_manifest import evaluate_manifest
 from .imaging import load_grayscale, rectify_global_skew, rectify_page_quadrilateral
 from .pipeline import process_file
@@ -56,6 +56,21 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--contract-staff-spaces", type=float, default=0.3)
     benchmark.add_argument("--bootstrap-rounds", type=int, default=2000)
     benchmark.add_argument("--out", type=Path, default=Path("synthetic-evaluation.json"))
+
+    perspective = commands.add_parser(
+        "evaluate-perspective",
+        help="Compare notehead proposals before and after known-corner projective correction",
+    )
+    perspective.add_argument("--pages", type=int, default=20)
+    perspective.add_argument("--seed", type=int, default=20261029)
+    perspective.add_argument("--staff-count", type=int, default=2)
+    perspective.add_argument("--notes-per-staff", type=int, default=9)
+    perspective.add_argument("--spacing", type=int, default=16)
+    perspective.add_argument("--noise-sigma", type=float, default=2.0)
+    perspective.add_argument("--blur-sigma", type=float, default=0.35)
+    perspective.add_argument("--contract-staff-spaces", type=float, default=0.3)
+    perspective.add_argument("--bootstrap-rounds", type=int, default=2000)
+    perspective.add_argument("--out", type=Path, default=Path("perspective-evaluation.json"))
 
     manifest = commands.add_parser("evaluate-manifest", help="Evaluate notehead proposals on annotated external pages")
     manifest.add_argument("--manifest", type=Path, required=True)
@@ -144,6 +159,22 @@ def main() -> None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
         print(json.dumps({"report_path": str(args.out), **{k: v for k, v in result.items() if k != "per_page"}},
+                         indent=2, ensure_ascii=False))
+    elif args.command == "evaluate-perspective":
+        result = evaluate_perspective_capture(
+            pages=args.pages,
+            seed=args.seed,
+            staff_count=args.staff_count,
+            notes_per_staff=args.notes_per_staff,
+            spacing=args.spacing,
+            noise_sigma=args.noise_sigma,
+            blur_sigma=args.blur_sigma,
+            contract_staff_spaces=args.contract_staff_spaces,
+            bootstrap_rounds=args.bootstrap_rounds,
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(json.dumps({"report_path": str(args.out), "measurements": result["measurements"]},
                          indent=2, ensure_ascii=False))
     elif args.command == "evaluate-manifest":
         result = evaluate_manifest(

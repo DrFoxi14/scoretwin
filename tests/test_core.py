@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 import cv2
 import numpy as np
 
-from scoretwin.benchmark import evaluate_synthetic
+from scoretwin.benchmark import evaluate_perspective_capture, evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
 from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
 from scoretwin.musicxml import build_musicxml
@@ -512,3 +512,31 @@ def test_synthetic_benchmark_schema_is_reproducible():
     assert isinstance(report["runtime_environment"]["runtime_meets_all_project_requirements"], bool)
     assert report["software"]["scoretwin"]
     assert report["proposal_model_training_metrics"]["seed"] == 19
+
+
+def test_perspective_capture_benchmark_keeps_pairs_and_reports_both_modes():
+    report = evaluate_perspective_capture(
+        pages=2,
+        seed=91,
+        staff_count=1,
+        notes_per_staff=5,
+        noise_sigma=0.0,
+        blur_sigma=0.0,
+        bootstrap_rounds=100,
+    )
+    assert report["benchmark"] == "synthetic-registered-perspective-capture-v1"
+    assert report["not_did"] is True
+    assert report["data_status"] == "synthetic_registered_pairs_no_real_photographs"
+    assert report["protocol"]["corner_ground_truth"].startswith("exact page quadrilateral")
+    assert set(report["measurements"]) == {
+        "source_reference", "projective_capture", "known_corner_rectified"
+    }
+    assert report["measurements"]["source_reference"]["pages_n"] == 2
+    assert report["measurements"]["projective_capture"]["pages_n"] == 2
+    assert report["measurements"]["known_corner_rectified"]["pages_n"] == 2
+    assert report["measurements"]["projective_capture"]["pages_with_any_staff_detected"] == 0
+    assert report["measurements"]["known_corner_rectified"]["pages_with_any_staff_detected"] == 2
+    assert len(report["per_page"]["known_corner_rectified"]) == 2
+    assert len(report["capture_pairs"]) == 2
+    assert len(report["capture_pairs"][0]["projective_raster_sha256"]) == 64
+    assert len(report["capture_pairs"][0]["source_to_projective_homography"]) == 3
