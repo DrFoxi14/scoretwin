@@ -334,6 +334,98 @@ def test_musicxml_serializes_annotated_chords_voices_accidentals_and_systems():
     assert measures[0].find("./backup/duration").text == "2"
 
 
+def test_musicxml_exports_editable_duration_ticks_accidentals_and_voices():
+    scene = {
+        "schema": "scoretwin-scene-0.1",
+        "timing_units": "ticks_16_per_quarter",
+        "staffs": [{
+            "part_id": "voice-test",
+            "part_name": "Voice test",
+            "system_index": 0,
+            "staff_number": 1,
+            "lines": [10, 20, 30, 40, 50],
+            "spacing": 10,
+            "barlines": [],
+            "clef": {"sign": "G", "line": 2},
+        }],
+        "notes": [
+            {
+                "id": "note-eighth",
+                "staff_index": 0,
+                "center": [30.0, 40.0],
+                "pitch": {"step": "E", "octave": 4, "alter": -1},
+                "accidental": "flat",
+                "voice": 1,
+                "duration_ticks": 8,
+                "duration": 8,
+                "type": "eighth",
+                "uncertainty": [],
+            },
+            {
+                "id": "note-quarter",
+                "staff_index": 0,
+                "center": [60.0, 30.0],
+                "pitch": {"step": "G", "octave": 4},
+                "voice": 2,
+                "duration_ticks": 16,
+                "duration": 16,
+                "type": "quarter",
+                "uncertainty": [],
+            },
+        ],
+        "relations": [],
+        "primitives": [],
+    }
+    root = ET.fromstring(build_musicxml(scene))
+    measure = root.find("./part/measure")
+    assert measure.find("./attributes/divisions").text == "16"
+    eighth = root.find(".//note[@id='note-eighth']")
+    quarter = root.find(".//note[@id='note-quarter']")
+    assert eighth.find("duration").text == "8"
+    assert eighth.find("type").text == "eighth"
+    assert eighth.find("./pitch/alter").text == "-1"
+    assert eighth.find("accidental").text == "flat"
+    assert eighth.find("voice").text == "1"
+    assert quarter.find("duration").text == "16"
+    assert quarter.find("type").text == "quarter"
+    assert quarter.find("voice").text == "2"
+    assert measure.find("./backup/duration").text == "8"
+
+
+def test_musicxml_tick_mode_preserves_legacy_quarter_unit_values():
+    scene = {
+        "schema": "scoretwin-scene-0.1",
+        "timing_units": "ticks_16_per_quarter",
+        "staffs": [{
+            "part_id": "p1", "system_index": 0, "staff_number": 1,
+            "lines": [10, 20, 30, 40, 50], "spacing": 10, "barlines": [],
+        }],
+        "notes": [{
+            "id": "legacy-duration",
+            "staff_index": 0,
+            "center": [30.0, 40.0],
+            "pitch": {"step": "E", "octave": 4},
+            "onset": 1,
+            "duration": 2,
+            "uncertainty": [],
+        }],
+    }
+    root = ET.fromstring(build_musicxml(scene))
+    note = root.find("./part/measure/note")
+    assert root.find(".//divisions").text == "16"
+    assert note.find("duration").text == "32"
+
+
+def test_browser_editor_exposes_accidental_duration_and_voice_controls():
+    assert "Accidental for '+note.id" in WEB_PAGE
+    assert "Duration for '+note.id" in WEB_PAGE
+    assert "Voice for '+note.id" in WEB_PAGE
+    assert "currentScene.timing_units='ticks_16_per_quarter'" in WEB_PAGE
+    assert "note.duration_ticks=durationTicks[value]" in WEB_PAGE
+    assert "note.pitch.alter=accidentalAlter[value]" in WEB_PAGE
+    assert "note.voice=Number(value)" in WEB_PAGE
+
+
 def test_musicxml_exports_stacked_noteheads_as_review_chords():
     scene = {
         "staffs": [{"lines": [10, 20, 30, 40, 50], "spacing": 10, "barlines": []}],
