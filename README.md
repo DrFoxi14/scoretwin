@@ -95,7 +95,6 @@ Example:
   "pages": [{
     "id": "page-001",
     "image": "images/page-001.jpg",
-    "sha256": "optional-lowercase-sha256",
     "staff_spacing_px": 17.0,
     "notes": [
       {"center": [245.2, 319.7], "staff_index": 0, "pitch": {"step": "G", "octave": 4}}
