@@ -35,7 +35,7 @@ button{background:#b7f36b;color:#151a12;font-weight:700;border:0;border-radius:9
 input{margin:12px 0}img{width:100%;height:auto;border-radius:8px;border:1px solid #303949}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#ced7e5}a{color:#b7f36b}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.editor-row{display:grid;grid-template-columns:minmax(170px,1.6fr) repeat(4,minmax(90px,1fr));gap:8px;align-items:center;border-top:1px solid #303949;padding:10px 0}
+.editor-row{display:grid;grid-template-columns:minmax(170px,1.6fr) repeat(5,minmax(82px,1fr));gap:8px;align-items:center;border-top:1px solid #303949;padding:10px 0}
 .editor-row span{overflow-wrap:anywhere;color:#d8deea}
 .editor-row select{min-width:0;width:100%;background:#10131a;color:#edf0f6;padding:7px 5px;border:1px solid #46536a;border-radius:7px}
 canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px solid #303949;touch-action:none}
@@ -126,6 +126,8 @@ function syncPrimitive(note){
  primitive.symbolic.accidental=note.accidental||null;
  primitive.symbolic.duration_ticks=note.duration_ticks??null;
  primitive.symbolic.duration_type=note.type||null;
+ primitive.symbolic.duration_ticks=note.duration_ticks??null;
+ primitive.symbolic.onset_ticks=note.onset_ticks??null;
  primitive.symbolic.voice=note.voice??null;
 }function updatePitchFromGeometry(note){
  const staff=currentScene.staffs[note.staff_index];if(!staff)return;
@@ -245,6 +247,59 @@ function draw3d(){
  ctx.fillStyle='#9da8b9';ctx.font='12px system-ui';
  ctx.fillText('x/y: observed page coordinates · z: semantic visualization only',16,24);
 }
+function assignExplicitOnset(note,requestedOnset){
+ const staff=currentScene.staffs[note.staff_index];if(!staff)throw new Error('Staff geometry is unavailable.');
+ const spacing=Number(staff.spacing)||12;
+ const barlines=staff.barlines||[];
+ const measureIndex=barlines.filter(x=>Number(note.center[0])>Number(x)).length;
+ const voice=Number(note.voice||1);
+ const related=currentScene.notes.filter(item=>{
+  if(Number(item.staff_index)!==Number(note.staff_index)||Number(item.voice||1)!==voice)return false;
+  return barlines.filter(x=>Number(item.center[0])>Number(x)).length===measureIndex;
+ }).sort((a,b)=>Number(a.center[0])-Number(b.center[0])||Number(a.center[1])-Number(b.center[1]));
+ const groups=[];
+ for(const item of related){
+  const last=groups[groups.length-1];
+  let chordMember=false;
+  if(last&&last.length){
+   const previous=last[last.length-1];
+   const xGap=Math.abs(Number(item.center[0])-Number(previous.center[0]));
+   const yGap=Math.abs(Number(item.center[1])-Number(previous.center[1]));
+   const pitchDiff=item.pitch.step!==previous.pitch.step||Number(item.pitch.octave)!==Number(previous.pitch.octave);
+   chordMember=xGap<=Math.max(2,0.32*spacing)&&yGap>=0.38*spacing&&pitchDiff;
+  }
+  if(chordMember)last.push(item);else groups.push([item]);
+ }
+ const durationTicks=item=>{
+  if(Number.isFinite(Number(item.duration_ticks))&&item.duration_ticks!==null&&item.duration_ticks!==undefined)return Math.max(1,Number(item.duration_ticks));
+  if(Number.isFinite(Number(item.duration))&&item.duration!==null&&item.duration!==undefined)return Math.max(1,Number(item.duration)*16);
+  return 16;
+ };
+ let cursor=0;
+ const planned=[];
+ let targetFound=false;
+ for(const group of groups){
+  let onset=cursor;
+  if(group.includes(note)){
+   targetFound=true;
+   onset=requestedOnset;
+   if(onset<cursor)throw new Error('That onset overlaps an earlier event in this staff/voice. Choose a later tick or edit the earlier duration.');
+  }
+  const duration=Math.max(...group.map(durationTicks));
+  planned.push({group,onset});
+  cursor=onset+duration;
+ }
+ if(!targetFound)throw new Error('Selected note is not present in its staff/voice sequence.');
+ currentScene.timing_units='ticks_16_per_quarter';
+ for(const plan of planned){
+  for(const item of plan.group){
+   item.onset_ticks=plan.onset;
+   item.onset=plan.onset;
+   item.manually_edited_onset=true;
+   syncPrimitive(item);
+  }
+ }
+}
 function buildEditor(){
  const holder=document.getElementById('editor');holder.replaceChildren();
  if(!currentScene||!currentScene.notes.length){holder.textContent='No notehead proposals are ready for pitch editing.';return;}
@@ -352,7 +407,28 @@ function buildEditor(){
     document.getElementById('status').textContent='Voice '+value+' selected. Review overlaps and timing in the exported score.';
    }
   );
-  row.append(title,pitchSelect,accidentalSelect,durationSelect,voiceSelect);
+  const onsetInput=document.createElement('input');
+  onsetInput.type='number';onsetInput.min='0';onsetInput.max='4096';onsetInput.step='1';
+  onsetInput.placeholder='Auto onset';onsetInput.title='Onset in ticks (16 ticks per quarter)';
+  onsetInput.setAttribute('aria-label','Onset ticks for '+note.id);
+  onsetInput.value=note.onset_ticks===undefined||note.onset_ticks===null?'':String(note.onset_ticks);
+  onsetInput.addEventListener('change',()=>{
+   const requested=Number(onsetInput.value);
+   if(onsetInput.value.trim()===''||!Number.isFinite(requested)||!Number.isInteger(requested)||requested<0||requested>4096){
+    onsetInput.value=note.onset_ticks===undefined||note.onset_ticks===null?'':String(note.onset_ticks);
+    document.getElementById('status').textContent='Onset must be a whole number of ticks between 0 and 4096.';
+    return;
+   }
+   try{
+    assignExplicitOnset(note,requested);
+    draw3d();drawPage();buildEditor();
+    document.getElementById('status').textContent='Explicit onset saved. All events in this measure/voice now carry onset ticks; review overlaps and measure totals.';
+   }catch(error){
+    onsetInput.value=note.onset_ticks===undefined||note.onset_ticks===null?'':String(note.onset_ticks);
+    document.getElementById('status').textContent=error.message||String(error);
+   }
+  });
+  row.append(title,pitchSelect,accidentalSelect,durationSelect,voiceSelect,onsetInput);
   holder.appendChild(row);
  });
 }const form=document.getElementById('upload');
