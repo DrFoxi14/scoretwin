@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import cv2
 
 from .benchmark import evaluate_synthetic
 from .benchmark_manifest import evaluate_manifest
+from .imaging import load_grayscale, rectify_global_skew
 from .pipeline import process_file
 from .proposal import save_model, train_proposal_model
 from .synthetic import generate_synthetic_page
@@ -55,6 +57,16 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--tolerance-sp", type=float, default=0.35)
     manifest.add_argument("--bootstrap-samples", type=int, default=1000)
     manifest.add_argument("--bootstrap-seed", type=int, default=20261029)
+
+    rectify = commands.add_parser(
+        "rectify-preview",
+        help="Create an optional global-skew preview with reversible source coordinates",
+    )
+    rectify.add_argument("input", type=Path)
+    rectify.add_argument("--out", type=Path, default=Path("capture-rectification"))
+    rectify.add_argument("--page", type=int, default=0)
+    rectify.add_argument("--dpi", type=int, default=200)
+    rectify.add_argument("--max-skew-degrees", type=float, default=12.0)
 
     serve = commands.add_parser("serve", help="Run the local browser interface")
     serve.add_argument("--host", default="127.0.0.1")
@@ -129,6 +141,48 @@ def main() -> None:
             "recall": result["recall"],
             "f1": result["f1"],
             "confidence_intervals": result["precision_recall_f1_bootstrap_95_ci"],
+        }, indent=2, ensure_ascii=False))
+    elif args.command == "rectify-preview":
+        source_bytes = args.input.read_bytes()
+        source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+        gray = load_grayscale(args.input, page=args.page, dpi=args.dpi)
+        rectification = rectify_global_skew(
+            gray,
+            max_abs_skew_degrees=args.max_skew_degrees,
+        )
+        args.out.mkdir(parents=True, exist_ok=True)
+        source_copy = args.out / "source" / args.input.name
+        source_copy.parent.mkdir(parents=True, exist_ok=True)
+        source_copy.write_bytes(source_bytes)
+        copied_source_sha256 = hashlib.sha256(source_copy.read_bytes()).hexdigest()
+        rectified_path = args.out / "rectified-preview.png"
+        if not cv2.imwrite(str(rectified_path), rectification.image):
+            raise IOError(f"Could not write rectified preview to {rectified_path}")
+        metadata = {
+            "schema": "scoretwin-capture-rectification-0.1",
+            "source_file_name": args.input.name,
+            "source_sha256": source_sha256,
+            "source_copy_sha256": copied_source_sha256,
+            "source_bytes_preserved": source_sha256 == copied_source_sha256,
+            "source_page_index": args.page if args.input.suffix.lower() == ".pdf" else None,
+            "source_image_shape_px": [int(gray.shape[0]), int(gray.shape[1])],
+            "rectified_image_shape_px": [
+                int(rectification.image.shape[0]), int(rectification.image.shape[1])
+            ],
+            "rectification": rectification.to_dict(),
+            "rectified_preview_file": rectified_path.name,
+        }
+        metadata_path = args.out / "capture-transform.json"
+        metadata_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(json.dumps({
+            "output_dir": str(args.out),
+            "metadata_file": str(metadata_path),
+            "rectified_preview_file": str(rectified_path),
+            "source_bytes_preserved": metadata["source_bytes_preserved"],
+            "estimated_skew_degrees": rectification.estimated_skew_degrees,
+            "applied_correction_degrees": rectification.applied_correction_degrees,
+            "rectification_applied": rectification.applied,
+            "reason": rectification.reason,
         }, indent=2, ensure_ascii=False))
     elif args.command == "serve":
         import uvicorn

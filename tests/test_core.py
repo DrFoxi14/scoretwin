@@ -8,7 +8,7 @@ import numpy as np
 
 from scoretwin.benchmark import evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
-from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, refine_notehead_geometry, staff_step_and_pitch
+from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, rectify_global_skew, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
 from scoretwin.proposal import load_model, predict_patch, save_model, train_proposal_model
@@ -109,6 +109,42 @@ def test_skew_diagnostic_flags_a_rotated_synthetic_page():
     angle = estimate_global_skew_degrees(rotated)
     assert angle is not None
     assert abs(angle) >= 2.4
+
+
+def test_global_skew_rectification_retains_source_coordinate_transform():
+    gray, truth = generate_synthetic_page(seed=38, staff_count=1, notes_per_staff=5)
+    height, width = gray.shape
+    rotation = cv2.getRotationMatrix2D(((width - 1) / 2.0, (height - 1) / 2.0), 3.0, 1.0)
+    rotated = cv2.warpAffine(gray, rotation, (width, height), borderValue=255)
+    original = rotated.copy()
+
+    result = rectify_global_skew(rotated)
+
+    assert result.applied
+    assert result.reason == "global_rotation_rectified"
+    assert result.estimated_skew_degrees is not None
+    assert abs(result.estimated_skew_degrees) >= 2.4
+    assert abs(estimate_global_skew_degrees(result.image) or 0.0) < 0.5
+    assert result.image.shape[0] >= rotated.shape[0]
+    assert result.image.shape[1] >= rotated.shape[1]
+    assert np.array_equal(rotated, original)
+
+    points = np.asarray([[0.0, 0.0], [width - 1.0, height - 1.0], truth[0]["center"]])
+    rectified_points = transform_points_xy(points, result.source_to_rectified)
+    recovered_points = transform_points_xy(rectified_points, result.rectified_to_source)
+    assert np.max(np.abs(recovered_points - points)) < 1e-8
+    metadata = result.to_dict()
+    assert metadata["preserves_source_pixels"] is False
+    assert metadata["coordinate_convention"].startswith("pixel centers")
+
+
+def test_global_skew_rectification_returns_identity_when_no_lines_are_found():
+    blank = np.full((120, 180), 255, dtype=np.uint8)
+    result = rectify_global_skew(blank)
+    assert not result.applied
+    assert result.reason == "no_dominant_near_horizontal_lines"
+    assert np.array_equal(result.image, blank)
+    assert np.array_equal(result.source_to_rectified, np.eye(3))
 
 
 def test_pitch_mapping_uses_treble_bottom_line_e4():

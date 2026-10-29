@@ -52,6 +52,12 @@ Analyze a PDF page (zero-indexed page number):
 
     scoretwin analyze ./score.pdf --page 0 --out ./runs/score
 
+Create an optional global-rotation preview with a reversible transform back to source coordinates:
+
+    scoretwin rectify-preview ./score.jpg --out ./runs/rectification
+
+The bundle stores a byte-identical source copy, a resampled preview, and both coordinate transforms. This is a capture diagnostic; the default OMR analysis still runs on the source raster. It handles one global rotation only, not perspective, page curl, or local deformation.
+
 Run the browser app:
 
     scoretwin serve --host 127.0.0.1 --port 8000

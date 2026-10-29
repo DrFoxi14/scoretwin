@@ -30,6 +30,32 @@ class StaffSystem:
         return result
 
 
+@dataclass(frozen=True)
+class CaptureRectification:
+    """A rectified analysis view plus reversible source-coordinate transforms."""
+
+    image: np.ndarray
+    source_to_rectified: np.ndarray
+    rectified_to_source: np.ndarray
+    estimated_skew_degrees: float | None
+    applied_correction_degrees: float
+    applied: bool
+    reason: str
+
+    def to_dict(self) -> dict:
+        return {
+            "estimated_skew_degrees": self.estimated_skew_degrees,
+            "applied_correction_degrees": self.applied_correction_degrees,
+            "applied": self.applied,
+            "reason": self.reason,
+            "source_to_rectified": self.source_to_rectified.tolist(),
+            "rectified_to_source": self.rectified_to_source.tolist(),
+            "coordinate_convention": "pixel centers; x increases right, y increases down",
+            "resampling": "opencv_inter_linear",
+            "preserves_source_pixels": False,
+        }
+
+
 def load_grayscale(path: str | Path, page: int = 0, dpi: int = 200) -> np.ndarray:
     """Load the selected raster image or PDF page as an 8-bit grayscale array."""
     file_path = Path(path)
@@ -119,6 +145,101 @@ def estimate_global_skew_degrees(gray: np.ndarray) -> float | None:
         if cumulative >= half_length:
             return round(angle, 3)
     return round(observations[-1][0], 3)
+
+
+def transform_points_xy(points: np.ndarray | list, matrix: np.ndarray) -> np.ndarray:
+    """Map Nx2 pixel-center points through a 2x3 affine or 3x3 homography."""
+    coordinates = np.asarray(points, dtype=np.float64)
+    transform = np.asarray(matrix, dtype=np.float64)
+    if coordinates.ndim != 2 or coordinates.shape[1] != 2:
+        raise ValueError("Points must have shape (N, 2).")
+    if transform.shape == (2, 3):
+        transform = np.vstack([transform, [0.0, 0.0, 1.0]])
+    if transform.shape != (3, 3) or not np.all(np.isfinite(transform)):
+        raise ValueError("Transform must be a finite 2x3 affine matrix or 3x3 homography.")
+    homogeneous = np.column_stack([coordinates, np.ones(len(coordinates))])
+    mapped = homogeneous @ transform.T
+    denominator = mapped[:, 2]
+    if np.any(np.abs(denominator) < 1e-12):
+        raise ValueError("Transform maps at least one point to infinity.")
+    return mapped[:, :2] / denominator[:, None]
+
+
+def rectify_global_skew(
+    gray: np.ndarray,
+    max_abs_skew_degrees: float = 12.0,
+    min_abs_skew_degrees: float = 0.15,
+    border_value: int = 255,
+) -> CaptureRectification:
+    """Create an optional deskewed analysis view and retain invertible coordinates.
+
+    Only global near-horizontal rotation is estimated. The source array is never
+    modified, and the returned affine matrices map pixel centers both ways. This
+    does not correct perspective, page curl, lens distortion, or local deformation.
+    """
+    if gray.ndim != 2 or gray.dtype != np.uint8:
+        raise ValueError("rectify_global_skew expects a uint8 grayscale image.")
+    if min(gray.shape) < 2:
+        raise ValueError("Input image must be at least 2x2 pixels.")
+    if not np.isfinite(max_abs_skew_degrees) or max_abs_skew_degrees <= 0.0:
+        raise ValueError("max_abs_skew_degrees must be finite and positive.")
+    if not np.isfinite(min_abs_skew_degrees) or min_abs_skew_degrees < 0.0:
+        raise ValueError("min_abs_skew_degrees must be finite and non-negative.")
+    if min_abs_skew_degrees > max_abs_skew_degrees:
+        raise ValueError("min_abs_skew_degrees cannot exceed max_abs_skew_degrees.")
+    if not 0 <= int(border_value) <= 255:
+        raise ValueError("border_value must be an integer in 0..255.")
+
+    estimated = estimate_global_skew_degrees(gray)
+    identity = np.eye(3, dtype=np.float64)
+    if estimated is None:
+        return CaptureRectification(
+            gray.copy(), identity, identity.copy(), None, 0.0, False,
+            "no_dominant_near_horizontal_lines",
+        )
+    if abs(estimated) > max_abs_skew_degrees:
+        return CaptureRectification(
+            gray.copy(), identity, identity.copy(), estimated, 0.0, False,
+            "estimated_skew_exceeds_rectification_limit",
+        )
+    if abs(estimated) < min_abs_skew_degrees:
+        return CaptureRectification(
+            gray.copy(), identity, identity.copy(), estimated, 0.0, False,
+            "below_minimum_rotation_threshold",
+        )
+
+    height, width = gray.shape
+    affine = cv2.getRotationMatrix2D(((width - 1) / 2.0, (height - 1) / 2.0), estimated, 1.0)
+    corners = np.asarray(
+        [[0.0, 0.0], [width - 1.0, 0.0], [width - 1.0, height - 1.0], [0.0, height - 1.0]],
+        dtype=np.float64,
+    )
+    transformed_corners = transform_points_xy(corners, affine)
+    minimum = transformed_corners.min(axis=0)
+    maximum = transformed_corners.max(axis=0)
+    output_width = max(1, int(np.ceil(maximum[0] - minimum[0] + 1.0)))
+    output_height = max(1, int(np.ceil(maximum[1] - minimum[1] + 1.0)))
+    affine[0, 2] -= minimum[0]
+    affine[1, 2] -= minimum[1]
+    source_to_rectified = np.vstack([affine, [0.0, 0.0, 1.0]])
+    rectified_to_source = np.linalg.inv(source_to_rectified)
+    rectified = cv2.warpAffine(
+        gray,
+        affine,
+        (output_width, output_height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=int(border_value),
+    )
+    return CaptureRectification(
+        rectified,
+        source_to_rectified,
+        rectified_to_source,
+        estimated,
+        estimated,
+        True,
+        "global_rotation_rectified",
+    )
 
 def _merge_active_rows(active: np.ndarray, counts: np.ndarray, max_gap: int = 2) -> list[int]:
     indices = np.flatnonzero(active)
