@@ -70,8 +70,8 @@ function rotatePoint(x,y,z){
  return [xx,y*cx-zz*sx,y*sx+zz*cx];
 }
 function projectPoint(x,y,z){
- const p=rotatePoint(x,y,z);
  const width=currentScene.image.width,height=currentScene.image.height;
+ const p=rotatePoint(x-width/2,y-height/2,z);
  const scale=Math.min((canvas.width-90)/Math.max(width,1),(canvas.height-70)/Math.max(height,1));
  return [canvas.width/2+p[0]*scale,canvas.height/2+p[1]*scale,p[2]];
 }
