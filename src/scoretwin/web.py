@@ -324,6 +324,20 @@ document.getElementById('render-current').addEventListener('click',async()=>{
  }catch(error){document.getElementById('status').textContent=error.message||String(error);}
  finally{button.disabled=false;}
 });
+document.getElementById('download-residual').addEventListener('click',()=>{
+ if(!residualPngBase64)return;
+ const binary=atob(residualPngBase64),bytes=new Uint8Array(binary.length);
+ for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+ const blob=new Blob([bytes],{type:'image/png'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');
+ anchor.href=url;anchor.download='residual-offset255.png';anchor.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+document.getElementById('download-identity-report').addEventListener('click',()=>{
+ if(!identityReportJson)return;
+ const blob=new Blob([identityReportJson],{type:'application/json'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');
+ anchor.href=url;anchor.download='identity-reconstruction.json';anchor.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
 document.getElementById('export-scene').addEventListener('click',()=>{
  if(!currentScene)return;
  const blob=new Blob([JSON.stringify(currentScene,null,2)],{type:'application/json'});
