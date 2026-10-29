@@ -117,7 +117,10 @@ def build_musicxml(scene: dict) -> str:
                 _sub(
                     notations,
                     "other-notation",
-                    "IDSR_REVIEW: duration, accidental, voice and note-to-measure assignment are provisional."
+                    "IDSR_REVIEW: duration, accidental, voice and note-to-measure assignment are provisional. "
+                    + "Duration hypothesis: "
+                    + str((note.get("duration_hypothesis") or {}).get("candidate", "unresolved"))
+                    + "; this hypothesis is not used for the exported duration."
                     + (" Chord membership was inferred geometrically and needs review." if is_chord_member else ""),
                     type="single",
                 )
