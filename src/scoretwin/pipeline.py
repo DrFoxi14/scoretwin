@@ -170,6 +170,21 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
     for note in notes:
         note["stem_ids"] = stem_by_note.get(note["id"], [])
         note["stem_detection_status"] = "proposal" if note["stem_ids"] else "not_detected_or_unresolved"
+        if note["shape_class"] == "hollow_head":
+            duration_candidate = "half_note_candidate" if note["stem_ids"] else "whole_note_candidate"
+            duration_basis = "hollow_notehead_with_stem" if note["stem_ids"] else "hollow_notehead_without_detected_stem"
+        elif note["stem_ids"]:
+            duration_candidate = "quarter_or_shorter_candidate"
+            duration_basis = "filled_notehead_with_stem; beam_and_flag_count_unknown"
+        else:
+            duration_candidate = "unresolved"
+            duration_basis = "filled_notehead_without_detected_stem"
+        note["duration_hypothesis"] = {
+            "candidate": duration_candidate,
+            "basis": duration_basis,
+            "confidence_calibrated": False,
+            "used_for_musicxml_duration": False,
+        }
         if "stem_attachment" not in note["uncertainty"]:
             note["uncertainty"].append("stem_attachment")
 
@@ -293,6 +308,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
                 "pitch_proposal": dict(note["pitch"]),
                 "duration": None,
                 "stem_ids": list(note.get("stem_ids", [])),
+                "duration_hypothesis": dict(note.get("duration_hypothesis", {})),
             },
             "provenance": {
                 "method": "component_geometry_plus_synthetic_patch_classifier_plus_local_template_fit",
