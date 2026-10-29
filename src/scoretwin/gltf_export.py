@@ -627,10 +627,19 @@ def validate_embedded_gltf(gltf_text: str) -> dict:
                 raise ValueError(f"Mesh {mesh_index} has an invalid index accessor.")
             if not 0 <= material_ref < len(gltf.get("materials", [])):
                 raise ValueError(f"Mesh {mesh_index} has an invalid material.")
-            position_accessor = accessors[int(primitive["attributes"]["POSITION"])]
+            attribute_accessors = {}
+            for attribute_name, accessor_ref in primitive.get("attributes", {}).items():
+                if not 0 <= int(accessor_ref) < len(accessors):
+                    raise ValueError(f"Mesh {mesh_index} has an invalid {attribute_name} accessor.")
+                attribute_accessors[attribute_name] = accessors[int(accessor_ref)]
+            position_accessor = attribute_accessors["POSITION"]
             index_accessor = accessors[int(primitive["indices"])]
             if position_accessor.get("type") != "VEC3" or index_accessor.get("type") != "SCALAR":
                 raise ValueError(f"Mesh {mesh_index} has incorrect accessor shapes.")
+            if "TEXCOORD_0" in attribute_accessors:
+                uv_accessor = attribute_accessors["TEXCOORD_0"]
+                if uv_accessor.get("type") != "VEC2" or int(uv_accessor["count"]) != int(position_accessor["count"]):
+                    raise ValueError(f"Mesh {mesh_index} has incorrect TEXCOORD_0 data.")
             if int(primitive.get("mode", 4)) != 4:
                 raise ValueError(f"Mesh {mesh_index} is not a triangle mesh.")
             index_count = int(index_accessor["count"])
