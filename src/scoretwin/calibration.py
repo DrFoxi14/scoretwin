@@ -86,10 +86,32 @@ def _correlation_bootstrap(
         quality_value = metric_value if direction == "higher" else -metric_value
         usable.append({
             "pair_id": row["pair_id"],
+            "comparison_group": str(row.get("repeat_group") or row["pair_id"]),
             "independence_group": row["independence_group"],
             "metric": quality_value,
             "rating": rating,
         })
+
+    # Hidden repeats estimate reliability but must not count twice as independent
+    # comparisons in the metric/rating association. Average repeated ratings into one
+    # comparison before computing correlations and source-cluster bootstrap intervals.
+    by_comparison: dict[str, list[dict]] = {}
+    for row in usable:
+        by_comparison.setdefault(row["comparison_group"], []).append(row)
+    collapsed = []
+    for comparison_group, group in sorted(by_comparison.items()):
+        independent_groups = {row["independence_group"] for row in group}
+        if len(independent_groups) != 1:
+            raise ValueError(
+                f"Repeated comparison {comparison_group} spans multiple independence_group values."
+            )
+        collapsed.append({
+            "pair_id": comparison_group,
+            "independence_group": group[0]["independence_group"],
+            "metric": float(np.mean([row["metric"] for row in group])),
+            "rating": float(np.mean([row["rating"] for row in group])),
+        })
+    usable = collapsed
 
     observed = _spearman(
         [row["metric"] for row in usable],
