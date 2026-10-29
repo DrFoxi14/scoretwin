@@ -13,7 +13,7 @@ from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 
 from .imaging import load_grayscale
-from .pipeline import analyze_array
+from .pipeline import analyze_array, render_geometry_scene
 from .musicxml import build_musicxml
 from .proposal import get_default_model, load_model
 
@@ -51,6 +51,11 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <section class="panel"><h2>2D geometry editor</h2><p class="muted">Drag a proposal box to adjust its geometry. This edits the reconstruction proposal, not the preserved source file.</p><canvas id="pageCanvas" width="1100" height="400" aria-label="Draggable notehead proposals over the source page"></canvas></section>
 <section class="panel"><h2>Scene summary</h2><pre id="summary"></pre><div><a id="download" download="provisional.musicxml">Download provisional MusicXML</a></div><button id="export-scene" type="button">Download edited scene JSON</button><button id="reset-edits" type="button">Reset edits</button></section>
 </div>
+<section class="panel"><h2>Structural 2D render</h2>
+<p class="muted">Only currently modeled staff lines, barlines and notehead proposals are drawn. This is not yet a pixel-identical replica; the source raster remains the identity anchor.</p>
+<img id="geometry-render" alt="Structural render of currently modeled primitives">
+<button id="render-current" type="button">Render current geometry</button>
+</section>
 <section class="panel"><h2>3D semantic layer view</h2>
 <p class="muted">Drag to rotate. The layer offset is a visualization convention, not measured physical ink depth.</p>
 <canvas id="scene3d" width="1100" height="400" aria-label="Interactive semantic layer preview"></canvas><br>
@@ -197,6 +202,7 @@ form.addEventListener('submit',async(event)=>{
   sourcePreview.src='data:image/png;base64,'+result.source_preview_png_base64;
   document.getElementById('summary').textContent=JSON.stringify(result.summary,null,2);
   document.getElementById('warnings').textContent=result.warnings.join('\n');
+  document.getElementById('geometry-render').src='data:image/png;base64,'+result.geometry_render_png_base64;
   setDownload(result.musicxml);document.getElementById('results').hidden=false;
   buildEditor();draw3d();
   status.textContent='Analysis finished. Review every pitch and all warnings before using the MusicXML.';
@@ -213,6 +219,17 @@ document.getElementById('reset-view').addEventListener('click',()=>{yaw=-0.38;ti
 canvas.addEventListener('pointerdown',event=>{dragging=true;lastX=event.clientX;lastY=event.clientY;canvas.setPointerCapture(event.pointerId);});
 canvas.addEventListener('pointermove',event=>{if(!dragging)return;yaw+=(event.clientX-lastX)*0.008;tilt+=(event.clientY-lastY)*0.008;tilt=Math.max(-1.2,Math.min(1.2,tilt));lastX=event.clientX;lastY=event.clientY;draw3d();});
 canvas.addEventListener('pointerup',()=>{dragging=false;});canvas.addEventListener('pointercancel',()=>{dragging=false;});
+document.getElementById('render-current').addEventListener('click',async()=>{
+ if(!currentScene)return;
+ const button=document.getElementById('render-current');button.disabled=true;
+ try{
+  const response=await fetch('/api/render',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentScene)});
+  const result=await response.json();if(!response.ok)throw new Error(result.detail||'Render failed');
+  document.getElementById('geometry-render').src='data:image/png;base64,'+result.geometry_render_png_base64;
+  document.getElementById('status').textContent='Structural render updated from the current geometry proposals.';
+ }catch(error){document.getElementById('status').textContent=error.message||String(error);}
+ finally{button.disabled=false;}
+});
 document.getElementById('export-scene').addEventListener('click',()=>{
  if(!currentScene)return;
  const blob=new Blob([JSON.stringify(currentScene,null,2)],{type:'application/json'});
@@ -322,7 +339,33 @@ async def analyze(file: UploadFile = File(...)) -> dict:
                 "scene": scene,
                 "musicxml": xml,
                 "source_preview_png_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
+                "geometry_render_png_base64": _render_base64(gray.shape, scene),
             }
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _render_base64(shape: tuple[int, int], scene: dict) -> str:
+    rendered = render_geometry_scene(shape, scene)
+    success, encoded = cv2.imencode(".png", rendered)
+    if not success:
+        raise RuntimeError("Could not encode geometry render.")
+    return base64.b64encode(encoded.tobytes()).decode("ascii")
+
+
+@app.post("/api/render")
+def render_current_geometry(scene: dict = Body(...)) -> dict:
+    if scene.get("schema") != "scoretwin-scene-0.1":
+        raise HTTPException(status_code=400, detail="Unrecognized ScoreTwin scene schema.")
+    try:
+        height = int(scene["image"]["height"])
+        width = int(scene["image"]["width"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Scene image dimensions are required.") from exc
+    if height < 32 or width < 32 or height * width > 80_000_000:
+        raise HTTPException(status_code=413, detail="Image dimensions are invalid or exceed the 80 megapixel limit.")
+    try:
+        return {"geometry_render_png_base64": _render_base64((height, width), scene)}
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
