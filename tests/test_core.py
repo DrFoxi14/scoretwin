@@ -9,6 +9,7 @@ import numpy as np
 from scoretwin.benchmark import evaluate_perspective_capture, evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
 from scoretwin.benchmark_photo_smoke import evaluate_photo_smoke
+from scoretwin.gltf_export import build_gltf, validate_embedded_gltf
 from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
@@ -339,6 +340,97 @@ def test_empty_scene_still_has_a_measure():
     assert root.find("./part/measure") is not None
 
 
+def test_gltf_export_is_self_contained_and_preserves_scene_metadata():
+    scene = {
+        "schema": "scoretwin-scene-0.1",
+        "coordinate_frame": "source_raster_pixel_centers",
+        "image": {"width": 100, "height": 80},
+        "source": {"sha256": "example-source-hash"},
+        "capture_diagnostics": {"perspective_rectified": False},
+        "staffs": [],
+        "notes": [{
+            "id": "note-1",
+            "staff_index": 0,
+            "center": [30.0, 30.0],
+            "bbox": [26, 27, 8, 6],
+            "shape_class": "hollow_head",
+            "pitch": {"step": "G", "octave": 4},
+            "voice": 2,
+            "duration_hypothesis": {"candidate": "half_note_candidate"},
+            "stem_ids": ["stem-1"],
+        }],
+        "primitives": [
+            {
+                "id": "system-0", "kind": "staff_system",
+                "geometry": {"bbox_px": [0, 10, 100, 48]},
+                "provenance": {"method": "test"},
+                "uncertainty": [],
+            },
+            {
+                "id": "line-0", "kind": "staffline",
+                "geometry": {"x0_px": 0, "y0_px": 10, "x1_px": 99, "y1_px": 10, "thickness_px_estimate": 1},
+                "provenance": {"method": "test"},
+                "uncertainty": ["line_thickness"],
+            },
+            {
+                "id": "stem-1", "kind": "stem",
+                "geometry": {"x0_px": 34, "y0_px": 10, "x1_px": 34, "y1_px": 30, "thickness_px_estimate": 1},
+                "provenance": {"method": "test"},
+                "uncertainty": ["stem_direction"],
+            },
+            {
+                "id": "note-1", "kind": "notehead",
+                "geometry": {"center_x_px": 30, "center_y_px": 30, "radius_x_px": 4, "radius_y_px": 3, "rotation_rad": 0},
+                "appearance": {"physical_absorbance_measured": False},
+                "symbolic": {"pitch_proposal": {"step": "G", "octave": 4}},
+                "provenance": {"method": "test"},
+                "uncertainty": ["duration"],
+            },
+            {
+                "id": "unknown-1", "kind": "unknown_region",
+                "geometry": {"bbox_px": [60, 20, 8, 12]},
+                "provenance": {"status": "unresolved"},
+                "uncertainty": ["symbol_identity"],
+            },
+        ],
+        "relations": [{"type": "stem_of", "source": "stem-1", "target": "note-1"}],
+    }
+
+    serialized = build_gltf(scene, layer_separation=7.5)
+    validation = validate_embedded_gltf(serialized)
+    gltf = __import__("json").loads(serialized)
+    assert validation["valid"] is True
+    assert validation["nodes"] == 4
+    assert validation["meshes"] == 4
+    assert validation["buffer_bytes"] > 0
+    assert gltf["asset"]["version"] == "2.0"
+    assert gltf["extras"]["source"]["sha256"] == "example-source-hash"
+    assert gltf["extras"]["depth_semantics"].startswith("Z offsets are visualization")
+    note_node = next(node for node in gltf["nodes"] if node["name"] == "note-1")
+    assert note_node["extras"]["idsr"]["uncertainty"] == ["duration"]
+    assert note_node["extras"]["idsr"]["note_metadata"]["voice"] == 2
+    assert note_node["extras"]["idsr"]["semantic_layer_z"] > 7.5
+    stem_node = next(node for node in gltf["nodes"] if node["name"] == "stem-1")
+    assert stem_node["extras"]["idsr"]["relations"]["stem_of"] == ["note-1"]
+
+
+def test_gltf_export_rejects_nonfinite_geometry_and_bad_scenes():
+    scene = {
+        "schema": "scoretwin-scene-0.1",
+        "image": {"width": 100, "height": 80},
+        "primitives": [{
+            "id": "bad-line",
+            "kind": "staffline",
+            "geometry": {"x0_px": float("nan"), "y0_px": 10, "x1_px": 99, "y1_px": 10},
+        }],
+        "notes": [],
+    }
+    with __import__("pytest").raises(ValueError, match="finite"):
+        build_gltf(scene)
+    with __import__("pytest").raises(ValueError, match="Unrecognized"):
+        build_gltf({"schema": "wrong", "image": {"width": 1, "height": 1}})
+
+
 def test_pipeline_creates_bundle_and_preserves_source_bytes(tmp_path):
     image_path = tmp_path / "source.png"
     output_dir = tmp_path / "bundle"
@@ -363,6 +455,12 @@ def test_pipeline_creates_bundle_and_preserves_source_bytes(tmp_path):
     assert (output_dir / "scene.json").exists()
     assert (output_dir / "overlay.png").exists()
     assert (output_dir / "geometry-render.png").exists()
+    assert (output_dir / "scene.gltf").exists()
+    gltf_text = (output_dir / "scene.gltf").read_text(encoding="utf-8")
+    gltf_validation = validate_embedded_gltf(gltf_text)
+    assert gltf_validation["valid"] is True
+    assert result["gltf_path"] == str(output_dir / "scene.gltf")
+    assert result["gltf_validation"]["nodes"] == gltf_validation["nodes"]
     geometry_render = cv2.imread(str(output_dir / "geometry-render.png"), cv2.IMREAD_GRAYSCALE)
     assert geometry_render is not None and geometry_render.shape == original.shape
     assert int(geometry_render.min()) < 255
