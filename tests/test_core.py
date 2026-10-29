@@ -561,6 +561,8 @@ def test_photo_smoke_reports_source_identity_without_claiming_accuracy(tmp_path)
 
     assert report["pages_n"] == 1
     assert report["pages_source_bytes_preserved_n"] == 1
+    assert report["source_bytes_preserved_rate"] == 1.0
+    assert len(report["source_bytes_preserved_rate_wilson_95_ci"]) == 2
     assert report["data_status"] == "no_independent_symbolic_or_geometric_ground_truth"
     assert report["claims_not_supported"]
     assert "accuracy benchmark" in report["epistemic_status"]
