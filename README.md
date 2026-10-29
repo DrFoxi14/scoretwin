@@ -68,6 +68,12 @@ The reference and candidate images must use the same dimensions, coordinate fram
 
 The report intentionally leaves \`aggregate_did\` unset. A weighted scalar must wait for a preregistered human-calibration study; choosing arbitrary weights would look quantitative while hiding an unvalidated value judgment.
 
+Measure the actual artifact bundle size, excluding the byte-identical source copy so it cannot trivially "win" by embedding the input:
+
+    scoretwin measure-bundle ./runs/score --out ./runs/score-storage.json
+
+The command includes all other files in the analysis bundle, including the residual, structural previews, scene graph, MusicXML and textured glTF. It reports stored artifact bits per page pixel with a hash/size manifest. This is storage accounting—not formal MDL or an oracle comparison—and its report is written outside the measured bundle to avoid self-referential byte counts.
+
 Analyze a PDF page (zero-indexed page number):
 
     scoretwin analyze ./score.pdf --page 0 --out ./runs/score
