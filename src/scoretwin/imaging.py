@@ -180,7 +180,11 @@ def detect_barlines(binary: np.ndarray, staff: StaffSystem) -> list[int]:
     vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, kernel_height))
     vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vertical_kernel)
     counts = (vertical[top:bottom + 1, :] > 0).sum(axis=0)
-    candidates = np.flatnonzero(counts >= max(6, int(staff.spacing * 2.1)))
+    # A barline should span most of the staff height. A long note stem can
+    # otherwise pass a weaker fixed staff-space threshold and be mislabeled.
+    staff_height = max(1, bottom - top)
+    minimum_span = max(7, int(round(0.72 * staff_height)))
+    candidates = np.flatnonzero(counts >= minimum_span)
     if len(candidates) == 0:
         return []
     groups: list[list[int]] = [[int(candidates[0])]]
