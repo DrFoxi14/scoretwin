@@ -148,6 +148,16 @@ function draw3d(){
   const b=projectPoint(pair[1][0]+cx0,pair[1][1]+cy0,pair[1][2]);
   ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
  });
+(currentScene.primitives||[]).filter(primitive=>primitive.kind==='stem').forEach(stem=>{
+  const relation=(currentScene.relations||[]).find(item=>item.type==='stem_of'&&item.source===stem.id);
+  const note=relation&&currentScene.notes.find(item=>item.id===relation.target);
+  if(!note)return;
+  const z=sep*(0.65+(note.staff_index%3)*0.16);
+  const g=stem.geometry||{};
+  const a=projectPoint(Number(g.x0_px),Number(g.y0_px),z);
+  const b=projectPoint(Number(g.x1_px),Number(g.y1_px),z);
+  ctx.strokeStyle='#c6ccd7';ctx.lineWidth=1.6;ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+ });
  currentScene.notes.forEach((note,index)=>{
   const x=Number(note.center[0])-cx0,y=Number(note.center[1])-cy0;
   const z=sep*(0.65+(note.staff_index%3)*0.16);
