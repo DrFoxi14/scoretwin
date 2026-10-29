@@ -662,6 +662,7 @@ def test_gltf_export_is_self_contained_and_preserves_scene_metadata():
     scene = {
         "schema": "scoretwin-scene-0.1",
         "coordinate_frame": "source_raster_pixel_centers",
+        "timing_units": "ticks_16_per_quarter",
         "image": {"width": 100, "height": 80},
         "source": {"sha256": "example-source-hash"},
         "capture_diagnostics": {"perspective_rectified": False},
@@ -674,6 +675,11 @@ def test_gltf_export_is_self_contained_and_preserves_scene_metadata():
             "shape_class": "hollow_head",
             "pitch": {"step": "G", "octave": 4},
             "voice": 2,
+            "duration": 8,
+            "duration_ticks": 8,
+            "type": "eighth",
+            "accidental": "flat",
+            "pitch": {"step": "G", "octave": 4, "alter": -1},
             "duration_hypothesis": {"candidate": "half_note_candidate"},
             "stem_ids": ["stem-1"],
         }],
@@ -730,6 +736,10 @@ def test_gltf_export_is_self_contained_and_preserves_scene_metadata():
     note_node = next(node for node in gltf["nodes"] if node["name"] == "note-1")
     assert note_node["extras"]["idsr"]["uncertainty"] == ["duration"]
     assert note_node["extras"]["idsr"]["note_metadata"]["voice"] == 2
+    assert note_node["extras"]["idsr"]["note_metadata"]["duration_ticks"] == 8
+    assert note_node["extras"]["idsr"]["note_metadata"]["type"] == "eighth"
+    assert note_node["extras"]["idsr"]["note_metadata"]["accidental"] == "flat"
+    assert gltf["extras"]["timing_units"] == "ticks_16_per_quarter"
     assert note_node["extras"]["idsr"]["semantic_layer_z"] > 7.5
     stem_node = next(node for node in gltf["nodes"] if node["name"] == "stem-1")
     assert stem_node["extras"]["idsr"]["relations"]["stem_of"] == ["note-1"]
