@@ -149,6 +149,121 @@ def _native_full_page_image(pdf_page, document, fitz) -> np.ndarray | None:
     return None
 
 
+
+def _pixels_to_supported_raster(samples: np.ndarray) -> np.ndarray:
+    """Normalize decoded image samples to uint8 gray or BGR with white alpha compositing."""
+    array = np.asarray(samples)
+    if array.dtype == np.uint16:
+        array = ((array.astype(np.uint32) + 128) // 257).clip(0, 255).astype(np.uint8)
+    elif array.dtype != np.uint8:
+        array = np.clip(np.rint(array), 0, 255).astype(np.uint8)
+
+    if array.ndim == 2:
+        return array.copy()
+    if array.ndim != 3:
+        raise ValueError("Decoded image must have two or three dimensions.")
+    channels = int(array.shape[2])
+    if channels == 1:
+        return array[:, :, 0].copy()
+    if channels == 2:
+        gray = array[:, :, 0].astype(np.float32)
+        alpha = array[:, :, 1:2].astype(np.float32) / 255.0
+        return np.clip(np.rint(gray[:, :, None] * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)[:, :, 0]
+    if channels == 3:
+        return array.copy()  # OpenCV decoded color order is BGR.
+    if channels == 4:
+        bgr = array[:, :, :3].astype(np.float32)
+        alpha = array[:, :, 3:4].astype(np.float32) / 255.0
+        return np.clip(np.rint(bgr * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)
+    raise ValueError(f"Unsupported decoded channel count: {channels}.")
+
+
+def _native_full_page_color_pixels(pdf_page, document, fitz) -> np.ndarray | None:
+    """Return native BGR/gray samples for a full-page embedded scan image, if unambiguous."""
+    if pdf_page.rotation != 0 or pdf_page.get_text().strip() or pdf_page.get_drawings():
+        return None
+    images = pdf_page.get_images(full=True)
+    if len(images) != 1:
+        return None
+    xref, _smask, width, height = images[0][:4]
+    page_rect = pdf_page.rect
+    if width < 1 or height < 1 or page_rect.width <= 0 or page_rect.height <= 0:
+        return None
+    page_ratio = float(page_rect.width / page_rect.height)
+    image_ratio = float(width / height)
+    if abs(page_ratio - image_ratio) / max(page_ratio, image_ratio) > 0.01:
+        return None
+    placements = pdf_page.get_image_rects(xref, transform=True)
+    if len(placements) != 1:
+        return None
+    rect, matrix = placements[0]
+    tolerance = 0.5
+    if (
+        abs(rect.x0 - page_rect.x0) > tolerance
+        or abs(rect.y0 - page_rect.y0) > tolerance
+        or abs(rect.x1 - page_rect.x1) > tolerance
+        or abs(rect.y1 - page_rect.y1) > tolerance
+        or abs(matrix.b) > 1e-6
+        or abs(matrix.c) > 1e-6
+        or matrix.a <= 0
+        or matrix.d <= 0
+    ):
+        return None
+    pix = fitz.Pixmap(document, xref)
+    if pix.colorspace is not None and pix.colorspace.name not in {"DeviceGray", "DeviceRGB"}:
+        pix = fitz.Pixmap(fitz.csRGB, pix)
+    samples = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+    if pix.n == 1:
+        return samples[:, :, 0].copy()
+    if pix.n == 2:
+        gray = samples[:, :, 0].astype(np.float32)
+        alpha = samples[:, :, 1:2].astype(np.float32) / 255.0
+        return np.clip(np.rint(gray[:, :, None] * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)[:, :, 0]
+    if pix.n == 3:
+        return cv2.cvtColor(samples, cv2.COLOR_RGB2BGR)
+    if pix.n == 4:
+        rgb = samples[:, :, :3].astype(np.float32)
+        alpha = samples[:, :, 3:4].astype(np.float32) / 255.0
+        rgb = np.clip(np.rint(rgb * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    return None
+
+
+def load_pixel_array(path: str | Path, page: int = 0, dpi: int = 200) -> np.ndarray:
+    """Load decoded source pixels as uint8 gray or BGR for lossless residual accounting.
+
+    Raster files retain their decoded grayscale or BGR channels. Alpha channels are
+    explicitly composited over white. PDF pages use native full-page image samples
+    when possible; other pages are rendered at the requested DPI. The original file
+    bytes must still be preserved separately because decoding is not byte identity.
+    """
+    file_path = Path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(file_path)
+    if file_path.suffix.lower() == ".pdf":
+        try:
+            import fitz
+        except ImportError as exc:
+            raise RuntimeError("PDF support requires PyMuPDF; install the project dependencies.") from exc
+        with fitz.open(file_path) as document:
+            if page < 0 or page >= len(document):
+                raise ValueError(f"PDF page index {page} is outside 0..{len(document) - 1}.")
+            pdf_page = document[page]
+            native = _native_full_page_color_pixels(pdf_page, document, fitz)
+            if native is not None:
+                return native
+            pix = pdf_page.get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72), alpha=False)
+            if pix.n == 1:
+                return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width).copy()
+            rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)[:, :, :3]
+            return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+    encoded = np.frombuffer(file_path.read_bytes(), dtype=np.uint8)
+    decoded = cv2.imdecode(encoded, cv2.IMREAD_UNCHANGED)
+    if decoded is None:
+        raise ValueError(f"Unsupported or corrupt image file: {file_path}")
+    return _pixels_to_supported_raster(decoded)
+
 def binarize(gray: np.ndarray) -> np.ndarray:
     """Return foreground ink as 255, using Otsu thresholding."""
     if gray.ndim != 2:
