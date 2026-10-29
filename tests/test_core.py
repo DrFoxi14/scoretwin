@@ -65,7 +65,7 @@ def test_scene_and_browser_expose_capture_quality_diagnostics():
     assert 'id="capture-frame"' in WEB_PAGE
     assert "navigator.mediaDevices.getUserMedia" in WEB_PAGE
     assert "liveCameraStream.getTracks().forEach(track=>track.stop())" in WEB_PAGE
-    assert "liveCapturedFile=new File([blob]" in WEB_PAGE
+    assert "liveCapturedFile=new File([selected.blob]" in WEB_PAGE
     assert "const file=activeFile()" in WEB_PAGE
 
 
@@ -728,7 +728,7 @@ def test_browser_analysis_returns_residual_proof_and_downloadable_png():
         async def read(self) -> bytes:
             return encoded.tobytes()
 
-    result = asyncio.run(analyze_web_upload(MemoryUpload(), page=0, corners_json=None))
+    result = asyncio.run(analyze_web_upload(MemoryUpload(), page=0, corners_json=None, capture_metadata_json=None))
     proof = result["identity_reconstruction"]
     assert proof["exact_pixel_reconstruction_verified"] is True
     assert proof["mismatched_pixel_count"] == 0
@@ -874,7 +874,7 @@ def test_browser_analysis_preserves_color_channels_in_residual_download():
         async def read(self) -> bytes:
             return encoded.tobytes()
 
-    result = asyncio.run(analyze_web_upload(MemoryColorUpload(), page=0, corners_json=None))
+    result = asyncio.run(analyze_web_upload(MemoryColorUpload(), page=0, corners_json=None, capture_metadata_json=None))
     assert result["identity_reconstruction"]["analysis_raster_encoding"] == "uint8 3-channel BGR analysis raster"
     assert result["identity_reconstruction"]["exact_pixel_reconstruction_verified"] is True
     assert result["residual_download_available"] is True
