@@ -58,6 +58,12 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <img id="geometry-render" alt="Structural render of currently modeled primitives">
 <button id="render-current" type="button">Render current geometry</button>
 </section>
+<section class="panel"><h2>Lossless residual gate</h2>
+<p class="muted">This proof covers exact recomposition of the decoded grayscale analysis raster, not symbolic correctness or physical ink depth. The original uploaded file remains separately preserved byte-for-byte.</p>
+<pre id="identity-summary">Waiting for analysis</pre>
+<button id="download-residual" type="button" disabled>Download uint16 residual PNG</button>
+<button id="download-identity-report" type="button" disabled>Download identity report JSON</button>
+</section>
 <section class="panel"><h2>3D semantic layer view</h2>
 <p class="muted">Drag to rotate. The layer offset is a visualization convention, not measured physical ink depth.</p>
 <canvas id="scene3d" width="1100" height="400" aria-label="Interactive semantic layer preview"></canvas><br>
