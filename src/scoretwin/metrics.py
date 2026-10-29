@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import zlib
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -305,3 +306,54 @@ def compare_idsr_components(
     if reference_mask is not None:
         report["mask"] = binary_mask_metrics(reference_mask, candidate_mask)
     return report
+
+
+
+def measure_bundle_storage(bundle_dir: str | Path, pixel_count: int) -> dict:
+    """Measure stored artifact bytes, explicitly excluding only the immutable source copy.
+
+    This is a product storage measurement, not formal model-based MDL. It includes
+    all generated bundle artifacts (including previews and the glTF texture), so
+    redundant derived files increase the measured size rather than disappearing.
+    The report is returned as a Python object and should be written outside bundle_dir
+    to avoid a self-referential file-size measurement.
+    """
+    root = Path(bundle_dir).resolve()
+    if not root.is_dir():
+        raise NotADirectoryError(root)
+    if int(pixel_count) <= 0:
+        raise ValueError("pixel_count must be a positive integer.")
+    included = []
+    excluded_sources = []
+    for path in sorted(candidate for candidate in root.rglob("*") if candidate.is_file()):
+        relative = path.relative_to(root).as_posix()
+        data = path.read_bytes()
+        entry = {
+            "path": relative,
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+        if path.name.startswith("source-original."):
+            excluded_sources.append(entry)
+        else:
+            included.append(entry)
+    total_bytes = sum(item["bytes"] for item in included)
+    return {
+        "schema": "scoretwin-bundle-storage-0.1",
+        "bundle_directory_name": root.name,
+        "pixel_count": int(pixel_count),
+        "included_file_count": len(included),
+        "included_file_bytes": total_bytes,
+        "stored_artifact_bits_per_pixel": float(8.0 * total_bytes / int(pixel_count)),
+        "included_files": included,
+        "excluded_source_copy_count": len(excluded_sources),
+        "excluded_source_copy_bytes": sum(item["bytes"] for item in excluded_sources),
+        "excluded_source_copies": excluded_sources,
+        "exclusion_policy": "Only files named source-original.* are excluded; all other files in the bundle are counted.",
+        "status": "storage accounting only; not a model-based minimum-description-length estimate",
+        "limitations": [
+            "Includes redundant previews and embedded textures, so it measures the current product bundle rather than a minimal code.",
+            "Excludes the copied immutable source file to avoid treating literal source duplication as a successful reconstruction code.",
+            "Does not compare against a trained generative model or a proven optimal oracle.",
+        ],
+    }
