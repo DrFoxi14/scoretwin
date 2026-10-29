@@ -583,6 +583,62 @@ def process_file(
         raise RuntimeError("Could not encode geometry render.")
     (output / "geometry-render.png").write_bytes(geometry_encoded.tobytes())
 
+    # Exact pixel reconstruction by a signed photometric residual.
+    # residual_signed = analysis_gray - geometry_render; PNG stores residual + 255
+    # as uint16 so every value in [-255, 255] is represented exactly.
+    residual_signed = analysis_gray.astype(np.int16) - geometry_render.astype(np.int16)
+    residual_offset = (residual_signed.astype(np.int32) + 255).astype(np.uint16)
+    residual_path = output / "residual-offset255.png"
+    if not cv2.imwrite(str(residual_path), residual_offset):
+        raise IOError("Could not write the uint16 photometric residual.")
+    stored_residual = cv2.imread(str(residual_path), cv2.IMREAD_UNCHANGED)
+    if stored_residual is None or stored_residual.dtype != np.uint16 or stored_residual.shape != analysis_gray.shape:
+        raise IOError("The saved photometric residual failed its lossless read-back check.")
+
+    reconstruction_int = (
+        geometry_render.astype(np.int32) + stored_residual.astype(np.int32) - 255
+    )
+    if reconstruction_int.min() < 0 or reconstruction_int.max() > 255:
+        raise IOError("The residual reconstruction exceeded the uint8 pixel range.")
+    reconstructed = reconstruction_int.astype(np.uint8)
+    exact_pixels = bool(np.array_equal(reconstructed, analysis_gray))
+    if not exact_pixels:
+        raise IOError("Geometry render plus residual does not reconstruct the analysis raster exactly.")
+    reconstructed_path = output / "reconstructed-analysis.png"
+    if not cv2.imwrite(str(reconstructed_path), reconstructed):
+        raise IOError("Could not write the reconstructed analysis raster.")
+    reconstructed_readback = cv2.imread(str(reconstructed_path), cv2.IMREAD_GRAYSCALE)
+    if reconstructed_readback is None or not np.array_equal(reconstructed_readback, analysis_gray):
+        raise IOError("The saved reconstructed image failed its pixel-equality check.")
+
+    identity_reconstruction = {
+        "schema": "scoretwin-lossless-residual-0.1",
+        "analysis_raster_encoding": "uint8 grayscale",
+        "residual_encoding": "uint16 PNG = analysis_pixel - geometry_render_pixel + 255",
+        "reconstruction_equation": "analysis_pixel = geometry_render_pixel + residual_uint16 - 255",
+        "source_analysis_raster_sha256": hashlib.sha256(analysis_gray.tobytes()).hexdigest(),
+        "geometry_render_sha256": hashlib.sha256(geometry_render.tobytes()).hexdigest(),
+        "reconstructed_raster_sha256": hashlib.sha256(reconstructed.tobytes()).hexdigest(),
+        "residual_file_sha256": hashlib.sha256(residual_path.read_bytes()).hexdigest(),
+        "pixel_count": int(analysis_gray.size),
+        "mismatched_pixel_count": int(np.count_nonzero(reconstructed != analysis_gray)),
+        "maximum_absolute_pixel_error": int(np.max(np.abs(reconstructed.astype(np.int16) - analysis_gray.astype(np.int16)))),
+        "exact_pixel_reconstruction_verified": exact_pixels,
+        "applies_to": "decoded grayscale analysis raster, including rectification if enabled",
+        "does_not_claim": [
+            "symbolic music correctness",
+            "reconstruction of original color from grayscale",
+            "physical ink-depth recovery",
+            "lossy compression of the residual",
+        ],
+        "source_file_bytes_preserved_separately": True,
+    }
+    identity_report_path = output / "identity-reconstruction.json"
+    identity_report_path.write_text(
+        json.dumps(identity_reconstruction, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    scene["identity_reconstruction"] = identity_reconstruction
+
     analysis_raster_path = None
     capture_transform_path = None
     if rectification is not None:
@@ -625,6 +681,10 @@ def process_file(
         "musicxml_path": str(output / "provisional.musicxml"),
         "overlay_path": str(output / "overlay.png"),
         "geometry_render_path": str(output / "geometry-render.png"),
+        "residual_path": str(residual_path),
+        "reconstructed_raster_path": str(reconstructed_path),
+        "identity_report_path": str(identity_report_path),
+        "identity_reconstruction": identity_reconstruction,
         "gltf_path": str(gltf_path),
         "gltf_validation": gltf_validation,
         "analysis_raster_path": str(analysis_raster_path) if analysis_raster_path else None,
