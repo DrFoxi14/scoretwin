@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import time
 from pathlib import Path
 
@@ -75,6 +74,140 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
                 "reason": "Candidate was not confidently classified as a notehead.",
             })
 
+    # Build a provenance-aware scene graph in observed pixel coordinates.
+    # This graph is the editable reconstruction hypothesis; it is not a replacement
+    # for the source bitmap and does not imply that every visible mark was understood.
+    primitives: list[dict] = []
+    relations: list[dict] = []
+    system_ids: dict[int, str] = {}
+
+    for staff in staff_objects:
+        staff_index = int(staff["index"])
+        system_id = f"staff-system-{staff_index:03d}"
+        system_ids[staff_index] = system_id
+        line_ids = []
+        primitives.append({
+            "id": system_id,
+            "kind": "staff_system",
+            "geometry": {
+                "bbox_px": [0, int(staff["top"]), int(gray.shape[1]), int(staff["bottom"] - staff["top"] + 1)],
+                "line_ids": [],
+                "spacing_px": float(staff["spacing"]),
+            },
+            "provenance": {"method": "horizontal_morphology", "status": "estimated"},
+            "uncertainty": ["perspective", "curvature", "staff_identity"],
+        })
+        for line_index, y_value in enumerate(staff["lines"]):
+            y = int(y_value)
+            y0, y1 = max(0, y - 1), min(staff_mask.shape[0], y + 2)
+            row_support = np.any(staff_mask[y0:y1, :] > 0, axis=0)
+            xs = np.flatnonzero(row_support)
+            x0 = int(xs[0]) if len(xs) else 0
+            x1 = int(xs[-1]) if len(xs) else gray.shape[1] - 1
+            primitive_id = f"staff{staff_index}-line{line_index}"
+            line_ids.append(primitive_id)
+            primitives.append({
+                "id": primitive_id,
+                "kind": "staffline",
+                "geometry": {
+                    "x0_px": x0,
+                    "y0_px": y,
+                    "x1_px": x1,
+                    "y1_px": y,
+                    "thickness_px_estimate": 1.0,
+                },
+                "provenance": {"method": "horizontal_morphology", "status": "estimated"},
+                "uncertainty": ["line_thickness", "local_waviness"],
+            })
+            relations.append({"type": "member_of", "source": primitive_id, "target": system_id})
+        next(p for p in primitives if p["id"] == system_id)["geometry"]["line_ids"] = line_ids
+        for bar_index, x_value in enumerate(staff.get("barlines", [])):
+            x = int(x_value)
+            bar_id = f"staff{staff_index}-bar{bar_index}"
+            primitives.append({
+                "id": bar_id,
+                "kind": "barline",
+                "geometry": {
+                    "x0_px": x,
+                    "y0_px": int(staff["top"]),
+                    "x1_px": x,
+                    "y1_px": int(staff["bottom"]),
+                    "thickness_px_estimate": 1.0,
+                },
+                "provenance": {"method": "vertical_morphology", "status": "proposal"},
+                "uncertainty": ["barline_vs_stem", "measure_boundary"],
+            })
+            relations.append({"type": "member_of", "source": bar_id, "target": system_id})
+
+    for note in notes:
+        x, y, box_width, box_height = [float(v) for v in note["bbox"]]
+        center_x, center_y = [float(v) for v in note["center"]]
+        crop = gray[
+            max(0, int(y)):min(gray.shape[0], int(y + box_height)),
+            max(0, int(x)):min(gray.shape[1], int(x + box_width)),
+        ]
+        ink_density = float(1.0 - np.mean(crop) / 255.0) if crop.size else 0.0
+        primitive = {
+            "id": note["id"],
+            "kind": "notehead",
+            "geometry": {
+                "center_x_px": center_x,
+                "center_y_px": center_y,
+                "radius_x_px": box_width / 2.0,
+                "radius_y_px": box_height / 2.0,
+                "rotation_rad": 0.0,
+                "bbox_px": [x, y, box_width, box_height],
+            },
+            "appearance": {
+                "ink_density_estimate": ink_density,
+                "measurement": "one_minus_mean_grayscale_inside_bbox",
+                "physical_absorbance_measured": False,
+            },
+            "symbolic": {
+                "pitch_proposal": dict(note["pitch"]),
+                "duration": None,
+            },
+            "provenance": {
+                "method": "component_geometry_plus_synthetic_patch_classifier",
+                "classifier_confidence": float(note["pitch_confidence"]),
+                "status": "proposal",
+            },
+            "uncertainty": list(note["uncertainty"]),
+        }
+        primitives.append(primitive)
+        system_id = system_ids.get(int(note["staff_index"]))
+        if system_id:
+            relations.append({"type": "geometrically_assigned_to_staff", "source": note["id"], "target": system_id})
+            staff = staff_objects[int(note["staff_index"])]
+            continuous_step = (float(staff["bottom"]) - center_y) / (float(staff["spacing"]) / 2.0)
+            note["continuous_staff_step"] = continuous_step
+            note["staff_position_offset_steps"] = continuous_step - round(continuous_step)
+            bottom_line_id = f"staff{int(note['staff_index'])}-line4"
+            relations.append({"type": "pitch_calibrated_by", "source": note["id"], "target": bottom_line_id})
+        note["primitive_id"] = note["id"]
+        note["appearance"] = primitive["appearance"]
+
+    for item in unknown_objects:
+        x, y, box_width, box_height = [int(v) for v in item["bbox"]]
+        primitives.append({
+            "id": item["id"],
+            "kind": "unknown_region",
+            "geometry": {
+                "bbox_px": [x, y, box_width, box_height],
+                "center_x_px": float(item["center"][0]),
+                "center_y_px": float(item["center"][1]),
+            },
+            "provenance": {
+                "method": "connected_component_proposal",
+                "classifier_confidence": float(item["confidence"]),
+                "status": "unresolved",
+            },
+            "uncertainty": ["symbol_identity", "relation_to_score"],
+        })
+        system_id = system_ids.get(int(item["staff_index"]))
+        if system_id:
+            relations.append({"type": "candidate_region_in_staff", "source": item["id"], "target": system_id})
+
     warnings = []
     if not staffs:
         warnings.append("No five-line staff group detected. Preserve the source and review the page manually.")
@@ -89,6 +222,8 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
         "schema": "scoretwin-scene-0.1",
         "image": {"width": int(gray.shape[1]), "height": int(gray.shape[0])},
         "staffs": staff_objects,
+        "primitives": primitives,
+        "relations": relations,
         "notes": notes,
         "unknown_objects": unknown_objects,
         "proposal_count": len(classified),
