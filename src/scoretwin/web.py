@@ -464,6 +464,13 @@ async def analyze(
             if not success:
                 raise RuntimeError("Preview encoding failed.")
             xml = Path(analysis_result["musicxml_path"]).read_text(encoding="utf-8")
+            identity_report_json = Path(analysis_result["identity_report_path"]).read_text(encoding="utf-8")
+            residual_bytes = Path(analysis_result["residual_path"]).read_bytes()
+            residual_download_available = len(residual_bytes) <= 12 * 1024 * 1024
+            residual_png_base64 = (
+                base64.b64encode(residual_bytes).decode("ascii")
+                if residual_download_available else None
+            )
             return {
                 "summary": {
                     "filename": filename,
@@ -480,6 +487,11 @@ async def analyze(
                 "source": scene["source"],
                 "scene": scene,
                 "musicxml": xml,
+                "identity_reconstruction": scene.get("identity_reconstruction", {}),
+                "identity_report_json": identity_report_json,
+                "residual_png_base64": residual_png_base64,
+                "residual_download_available": residual_download_available,
+                "residual_size_bytes": len(residual_bytes),
                 "source_preview_png_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
                 "geometry_render_png_base64": _render_base64(
                     (
