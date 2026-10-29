@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from scoretwin.benchmark import evaluate_synthetic
+from scoretwin.benchmark_manifest import evaluate_manifest
 from scoretwin.imaging import detect_staff_systems, estimate_global_skew_degrees, extract_notehead_candidates, refine_notehead_geometry, staff_step_and_pitch
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import analyze_array, process_file
@@ -190,6 +191,29 @@ def test_analysis_has_explicit_unknown_or_no_staff_warning():
     scene = analyze_array(image)
     assert scene["staffs"] == []
     assert any("No five-line staff group" in warning for warning in scene["warnings"])
+
+
+def test_annotated_manifest_evaluator_reports_page_bootstrap_intervals(tmp_path):
+    image, truth = generate_synthetic_page(seed=7, staff_count=1, notes_per_staff=5)
+    image_path = tmp_path / "annotated-page.png"
+    assert cv2.imwrite(str(image_path), image)
+    manifest = {
+        "schema": "scoretwin-annotated-pages-v1",
+        "pages": [{
+            "id": "synthetic-regression-page",
+            "image": image_path.name,
+            "staff_spacing_px": 16.0,
+            "notes": truth,
+        }],
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(__import__("json").dumps(manifest), encoding="utf-8")
+    result = evaluate_manifest(manifest_path, bootstrap_samples=100, bootstrap_seed=4)
+    assert result["pages_n"] == 1
+    assert result["ground_truth_noteheads_n"] == 5
+    assert set(result["precision_recall_f1_bootstrap_95_ci"]) == {"precision", "recall", "f1"}
+    assert result["per_page"][0]["image_sha256"]
+    assert result["software"]["opencv"] == cv2.__version__
 
 
 def test_synthetic_benchmark_schema_is_reproducible():

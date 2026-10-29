@@ -35,6 +35,10 @@ Evaluate notehead proposals on generated pages, with exact synthetic notehead-ce
 
     scoretwin evaluate-synthetic --pages 16 --seed 20261029 --out ./results/synthetic-evaluation.json
 
+Evaluate a separately annotated manifest (the command does not manufacture ground truth):
+
+    scoretwin evaluate-manifest --manifest ./data/manifest.json --out ./results/real-evaluation.json
+
 Train the small proposal model on generated synthetic crops:
 
     scoretwin train-model --out ./models/proposal.npz --samples-per-class 600 --epochs 50
@@ -77,3 +81,27 @@ The preserved source is the lossless identity anchor. The overlay is a diagnosti
 3. Add stem, beam, accidental and duration hypotheses with explicit user correction.
 4. Train or retain a proposal model only if it beats a simpler baseline on real pages.
 5. Add DID and MDL only after testing metrics against adversarial manipulations and human judgments.
+
+
+## External annotated-page manifest
+
+To evaluate real photographs, create a JSON file with schema \`scoretwin-annotated-pages-v1\`. Every image entry needs an image path relative to the manifest and a \`notes\` array whose items include \`center: [x, y]\` in the rasterized image coordinate frame and \`staff_index\` numbered from top to bottom. A \`pitch\` object can optionally contain \`step\` and \`octave\`; \`staff_spacing_px\` is strongly recommended. An optional SHA-256 is checked against the original file.
+
+Example:
+
+\`\`\`json
+{
+  "schema": "scoretwin-annotated-pages-v1",
+  "pages": [{
+    "id": "page-001",
+    "image": "images/page-001.jpg",
+    "sha256": "optional-lowercase-sha256",
+    "staff_spacing_px": 17.0,
+    "notes": [
+      {"center": [245.2, 319.7], "staff_index": 0, "pitch": {"step": "G", "octave": 4}}
+    ]
+  }]
+}
+\`\`\`
+
+The report includes per-page counts, precision/recall/F1, center error, pitch accuracy when labelled and page-bootstrap 95% intervals. These intervals describe variation across the supplied pages; they do not repair bias from a small or unrepresentative sample. Do not call this a real-photo benchmark unless the manifest actually references real photos with independently prepared annotations.

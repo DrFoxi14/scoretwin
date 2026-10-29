@@ -9,6 +9,7 @@ from pathlib import Path
 import cv2
 
 from .benchmark import evaluate_synthetic
+from .benchmark_manifest import evaluate_manifest
 from .pipeline import process_file
 from .proposal import save_model, train_proposal_model
 from .synthetic import generate_synthetic_page
@@ -42,6 +43,14 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--staff-count", type=int, default=2)
     benchmark.add_argument("--notes-per-staff", type=int, default=9)
     benchmark.add_argument("--out", type=Path, default=Path("synthetic-evaluation.json"))
+
+    manifest = commands.add_parser("evaluate-manifest", help="Evaluate notehead proposals on annotated external pages")
+    manifest.add_argument("--manifest", type=Path, required=True)
+    manifest.add_argument("--model", type=Path, default=None)
+    manifest.add_argument("--out", type=Path, default=Path("manifest-evaluation.json"))
+    manifest.add_argument("--tolerance-sp", type=float, default=0.35)
+    manifest.add_argument("--bootstrap-samples", type=int, default=1000)
+    manifest.add_argument("--bootstrap-seed", type=int, default=20261029)
 
     serve = commands.add_parser("serve", help="Run the local browser interface")
     serve.add_argument("--host", default="127.0.0.1")
@@ -95,6 +104,24 @@ def main() -> None:
         args.out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
         print(json.dumps({"report_path": str(args.out), **{k: v for k, v in result.items() if k != "per_page"}},
                          indent=2, ensure_ascii=False))
+    elif args.command == "evaluate-manifest":
+        result = evaluate_manifest(
+            args.manifest,
+            model_path=args.model,
+            tolerance_staff_spaces=args.tolerance_sp,
+            bootstrap_samples=args.bootstrap_samples,
+            bootstrap_seed=args.bootstrap_seed,
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(json.dumps({
+            "report_path": str(args.out),
+            "pages_n": result["pages_n"],
+            "precision": result["precision"],
+            "recall": result["recall"],
+            "f1": result["f1"],
+            "confidence_intervals": result["precision_recall_f1_bootstrap_95_ci"],
+        }, indent=2, ensure_ascii=False))
     elif args.command == "serve":
         import uvicorn
         uvicorn.run("scoretwin.web:app", host=args.host, port=args.port, reload=False)
