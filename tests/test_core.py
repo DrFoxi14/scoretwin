@@ -414,6 +414,20 @@ def test_gltf_export_is_self_contained_and_preserves_scene_metadata():
     assert stem_node["extras"]["idsr"]["relations"]["stem_of"] == ["note-1"]
 
 
+def test_gltf_export_handles_an_empty_scene_with_a_valid_buffer():
+    gltf_text = build_gltf({
+        "schema": "scoretwin-scene-0.1",
+        "image": {"width": 100, "height": 80},
+        "primitives": [],
+        "notes": [],
+    })
+    report = validate_embedded_gltf(gltf_text)
+    assert report["valid"] is True
+    assert report["nodes"] == 0
+    assert report["meshes"] == 0
+    assert report["buffer_bytes"] == 4
+
+
 def test_gltf_export_rejects_nonfinite_geometry_and_bad_scenes():
     scene = {
         "schema": "scoretwin-scene-0.1",
