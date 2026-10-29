@@ -120,6 +120,25 @@ def test_musicxml_is_well_formed_and_marks_uncertainty():
     assert "IDSR_REVIEW" in root.find(".//other-notation").text
 
 
+def test_musicxml_exports_stacked_noteheads_as_review_chords():
+    scene = {
+        "staffs": [{"lines": [10, 20, 30, 40, 50], "spacing": 10, "barlines": []}],
+        "notes": [
+            {"id": "n1", "staff_index": 0, "center": [50.0, 40.0], "pitch": {"step": "E", "octave": 4}},
+            {"id": "n2", "staff_index": 0, "center": [51.0, 30.0], "pitch": {"step": "G", "octave": 4}},
+            {"id": "n3", "staff_index": 0, "center": [75.0, 40.0], "pitch": {"step": "E", "octave": 4}},
+        ],
+    }
+    root = ET.fromstring(build_musicxml(scene))
+    notes = root.findall("./part/measure/note")
+    assert len(notes) == 3
+    assert notes[0].find("chord") is None
+    assert notes[1].find("chord") is not None
+    assert notes[2].find("chord") is None
+    marker_text = notes[1].find("./notations/other-notation").text
+    assert "Chord membership was inferred geometrically" in marker_text
+
+
 def test_empty_scene_still_has_a_measure():
     root = ET.fromstring(build_musicxml({"staffs": [], "notes": []}))
     assert root.find("./part/measure") is not None

@@ -16,7 +16,7 @@ This repository contains a runnable research prototype:
 - a local browser UI, CLI, synthetic-page generator and synthetic regression benchmark;
 - tests and a GitHub Actions workflow.
 
-This is not yet a validated general-purpose OMR engine. The current proposal model is trained only on synthetic crops. Pitch proposals assume treble clef and a C-major/no-accidental interpretation. Duration, voice, accidentals, staff-to-part mapping and ambiguous overlaps are not reliably inferred. The MusicXML exporter marks these assumptions rather than claiming a correct transcription.
+This is not yet a validated general-purpose OMR engine. The current proposal model is trained only on synthetic crops. Pitch proposals assume treble clef and a C-major/no-accidental interpretation. Duration, voice, accidentals, staff-to-part mapping and ambiguous overlaps are not reliably inferred. The MusicXML exporter marks these assumptions rather than claiming a correct transcription. Stacked noteheads with nearly aligned x-coordinates can be emitted as provisional chord hypotheses, and those relations are marked for review.
 
 ## Run locally
 
