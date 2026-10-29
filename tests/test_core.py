@@ -6,10 +6,12 @@ import xml.etree.ElementTree as ET
 import cv2
 import numpy as np
 
+from scoretwin.benchmark import evaluate_synthetic
 from scoretwin.imaging import detect_staff_systems, extract_notehead_candidates, staff_step_and_pitch
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import analyze_array, process_file
 from scoretwin.proposal import predict_patch, train_proposal_model
+from scoretwin.synthetic import generate_synthetic_page
 
 
 def synthetic_staff() -> np.ndarray:
@@ -32,11 +34,12 @@ def test_detects_one_five_line_staff():
     assert binary.shape == staff_mask.shape
 
 
-def test_notehead_components_are_proposed():
-    gray = synthetic_staff()
+def test_notehead_components_are_proposed_even_across_staff_lines():
+    gray, truth = generate_synthetic_page(seed=3, staff_count=2, notes_per_staff=9)
     staffs, binary, staff_mask = detect_staff_systems(gray)
     candidates = extract_notehead_candidates(gray, binary, staff_mask, staffs)
-    assert len(candidates) >= 1
+    assert len(staffs) == 2
+    assert len(candidates) >= len(truth) - 2
     assert all(candidate["bbox"][2] > 0 and candidate["bbox"][3] > 0 for candidate in candidates)
     assert all("crop" in candidate for candidate in candidates)
 
@@ -110,3 +113,13 @@ def test_analysis_has_explicit_unknown_or_no_staff_warning():
     scene = analyze_array(image)
     assert scene["staffs"] == []
     assert any("No five-line staff group" in warning for warning in scene["warnings"])
+
+
+def test_synthetic_benchmark_schema_is_reproducible():
+    report = evaluate_synthetic(pages=1, seed=44, staff_count=1, notes_per_staff=5)
+    assert report["benchmark"] == "synthetic-notehead-proposal-v1"
+    assert report["n_ground_truth"] == 5
+    assert report["pages"] == 1
+    assert 0.0 <= report["precision"] <= 1.0
+    assert 0.0 <= report["recall"] <= 1.0
+    assert len(report["per_page"]) == 1

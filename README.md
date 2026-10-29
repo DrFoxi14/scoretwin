@@ -4,18 +4,19 @@ ScoreTwin is the active implementation workspace for Identity-preserving Digital
 
 ## Current vertical slice
 
-This repository now contains a runnable research prototype rather than a research plan alone:
+This repository contains a runnable research prototype:
 
 - image and PDF ingestion;
-- staff-line detection and preliminary notehead proposals;
-- a small synthetic patch classifier that can be trained locally;
+- five-line staff detection;
+- notehead proposals that attempt to reconstruct fragments cut by staff lines;
+- a small synthetic patch classifier, trainable locally;
 - a geometry-first scene JSON with source hash and uncertainty flags;
-- a visual overlay for inspecting proposals;
-- provisional MusicXML export, with uncertain durations and notation explicitly marked for review;
-- a local browser UI and command line;
-- tests and CI.
+- a diagnostic 2D overlay and an interactive semantic-layer view;
+- editable pitch proposals and provisional MusicXML export, with uncertain durations and score structure marked for review;
+- a local browser UI, CLI, synthetic-page generator and synthetic regression benchmark;
+- tests and a GitHub Actions workflow.
 
-The critical limitation is intentional: this is not yet a validated general-purpose OMR engine. A notehead position can be proposed from the staff geometry; duration, voice, accidentals, instrument assignment and ambiguous overlaps are not reliably inferred in this first vertical slice. The exporter marks its assumptions rather than claiming a correct transcription.
+This is not yet a validated general-purpose OMR engine. The current proposal model is trained only on synthetic crops. Pitch proposals assume treble clef and a C-major/no-accidental interpretation. Duration, voice, accidentals, staff-to-part mapping and ambiguous overlaps are not reliably inferred. The MusicXML exporter marks these assumptions rather than claiming a correct transcription.
 
 ## Run locally
 
@@ -26,6 +27,18 @@ Python 3.11 or newer is required.
     pip install -e ".[test]"
     pytest
 
+Create and analyze a synthetic example (a useful first smoke test):
+
+    scoretwin demo --out ./scoretwin-demo
+
+Evaluate notehead proposals on generated pages, with exact synthetic notehead-center ground truth:
+
+    scoretwin evaluate-synthetic --pages 16 --seed 20261029 --out ./results/synthetic-evaluation.json
+
+Train the small proposal model on generated synthetic crops:
+
+    scoretwin train-model --out ./models/proposal.npz --samples-per-class 600 --epochs 50
+
 Analyze one image:
 
     scoretwin analyze ./score.png --out ./runs/score
@@ -33,10 +46,6 @@ Analyze one image:
 Analyze a PDF page (zero-indexed page number):
 
     scoretwin analyze ./score.pdf --page 0 --out ./runs/score
-
-Train the small proposal model on generated synthetic crops:
-
-    scoretwin train-model --out ./models/proposal.npz --samples-per-class 600 --epochs 50
 
 Run the browser app:
 
@@ -46,24 +55,24 @@ Then open http://127.0.0.1:8000. Uploaded files are processed by the local serve
 
 ## Output bundle
 
-- source file copied byte-for-byte to the bundle;
-- scene.json: staff systems, proposals, pitch-position estimates, provenance and warnings;
+- source file copied byte-for-byte to the bundle and verified by SHA-256;
+- scene.json: staff geometry, proposals, pitch-position estimates, provenance and warnings;
 - overlay.png: diagnostic visualization;
-- provisional.musicxml: schema-shaped MusicXML output carrying explicit review markers.
+- provisional.musicxml: XML output carrying explicit review markers.
 
-The output preserves the original file as the lossless identity anchor. The overlay is a diagnostic layer, not a claim that all original ink has been parsed into primitives.
+The preserved source is the lossless identity anchor. The overlay is a diagnostic layer, not a claim that all original ink has been parsed into primitives. The 3D view uses a semantic layer offset; it is not a measurement of the physical relief of ink.
 
 ## Epistemic status
 
-- [DEMONSTRATED BY CONSTRUCTION] The original uploaded file can be copied and SHA-256 verified byte-for-byte.
-- [MEASURED BY TESTS] Staff detection, synthetic classifier execution, MusicXML XML parsing and bundle generation are checked by the test suite and CI.
-- [HYPOTHESIS] The synthetic patch classifier will improve proposal ranking on real print; this must be checked on a held-out, real-page benchmark.
-- [NOT YET IMPLEMENTED] A trained end-to-end detector that discovers complete symbolic-geometric scenes from arbitrary score photographs, ambiguity-aware duration/voice inference, true physical ink depth and a calibrated DID benchmark.
+- [DEMONSTRATED BY CONSTRUCTION] The original uploaded file is copied byte-for-byte and hash-checked in CLI bundles.
+- [MEASURED BY TESTS] Staff detection, staff-line-crossing notehead proposal, synthetic classifier execution, MusicXML XML parsing and bundle generation are checked by tests.
+- [HYPOTHESIS] The synthetic patch classifier and geometric proposals will transfer to real score photographs. This must be tested on a held-out, real-page benchmark.
+- [NOT YET IMPLEMENTED] End-to-end recovery of complete symbolic-geometric scenes from arbitrary photographs, calibrated symbolic ambiguity, physically measured ink depth and validated DID/MDL metrics.
 
 ## Next gates
 
-1. Make the current pipeline reproducible in CI.
+1. Keep the synthetic regression benchmark deterministic and report precision/recall rather than only file creation.
 2. Measure notehead precision/recall on registered real photographs.
-3. Add barline, stem, beam, accidental and duration hypotheses with human correction hooks.
-4. Train a proposal model only if its real-page improvement beats the heuristic baseline.
-5. Add full DID and MDL only after the metrics are tested against adversarial manipulations and human judgments.
+3. Add stem, beam, accidental and duration hypotheses with explicit user correction.
+4. Train or retain a proposal model only if it beats a simpler baseline on real pages.
+5. Add DID and MDL only after testing metrics against adversarial manipulations and human judgments.
