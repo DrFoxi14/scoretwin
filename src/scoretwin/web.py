@@ -58,6 +58,10 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <img id="geometry-render" alt="Structural render of currently modeled primitives">
 <button id="render-current" type="button">Render current geometry</button>
 </section>
+<section class="panel"><h2>Capture quality and retake guidance</h2>
+<p class="muted">These are heuristic measurements, not calibrated probabilities. A warning is a suggestion to inspect or recapture the page, not a claim that OMR failed.</p>
+<pre id="capture-quality-summary">Waiting for analysis</pre>
+</section>
 <section class="panel"><h2>Lossless residual gate</h2>
 <p class="muted">This proof covers exact recomposition of the decoded grayscale analysis raster, not symbolic correctness or physical ink depth. The original uploaded file remains separately preserved byte-for-byte.</p>
 <pre id="identity-summary">Waiting for analysis</pre>
@@ -286,6 +290,17 @@ form.addEventListener('submit',async(event)=>{
   const unresolved=(currentScene.unknown_objects||[]).map(item=>item.id+': '+item.reason);
   document.getElementById('warnings').textContent=[...result.warnings,...unresolved].join('\n');
   document.getElementById('geometry-render').src='data:image/png;base64,'+result.geometry_render_png_base64;
+  const quality=(currentScene.capture_quality||{});
+  const qualityMetrics=quality.metrics||{};
+  const qualityAdvisories=quality.advisories||[];
+  document.getElementById('capture-quality-summary').textContent=[
+   'Status: '+(quality.status||'not reported'),
+   'Dynamic range p95-p05: '+(qualityMetrics.p95_minus_p05_dynamic_range??'not reported'),
+   'Normalized sharpness heuristic: '+(qualityMetrics.normalized_laplacian_variance??'not reported'),
+   'Background illumination spread: '+(qualityMetrics.background_grid_p90_minus_p10??'not reported'),
+   'Thresholds calibrated: '+(quality.thresholds_calibrated===true?'yes':'no'),
+   ...(qualityAdvisories.length?qualityAdvisories.map(item=>item.code+': '+item.action):['No heuristic retake advice; this does not establish correct symbol recognition.'])
+  ].join('\\n');
   const proof=result.identity_reconstruction||{};
   document.getElementById('identity-summary').textContent=[
    'Exact pixel recomposition: '+(proof.exact_pixel_reconstruction_verified?'PASS':'FAIL'),
