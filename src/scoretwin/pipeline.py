@@ -272,7 +272,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
     }
 
 
-def render_geometry_scene(shape: tuple[int, int], scene: dict) -> np.ndarray:
+def render_geometry_scene(shape: tuple[int, int], scene: dict, scale: float = 1.0) -> np.ndarray:
     """Render currently modeled primitives on a clean page-sized canvas.
 
     This is an inspectable structural render, not yet a pixel-identical reconstruction:
@@ -282,22 +282,25 @@ def render_geometry_scene(shape: tuple[int, int], scene: dict) -> np.ndarray:
     height, width = int(shape[0]), int(shape[1])
     if height < 1 or width < 1 or height * width > 80_000_000:
         raise ValueError("Invalid or excessively large geometry-render dimensions.")
+    if not np.isfinite(scale) or scale <= 0 or scale > 1:
+        raise ValueError("Geometry-render scale must be in (0, 1]." )
     image = np.full((height, width), 255, dtype=np.uint8)
 
     for staff in scene.get("staffs", []):
         for y_value in staff.get("lines", []):
-            y = int(round(float(y_value)))
+            y = int(round(float(y_value) * scale))
             cv2.line(image, (0, y), (width - 1, y), 20, 1, cv2.LINE_AA)
         for x_value in staff.get("barlines", []):
-            x = int(round(float(x_value)))
+            x = int(round(float(x_value) * scale))
             cv2.line(
-                image, (x, int(staff["top"])), (x, int(staff["bottom"])),
-                20, 1, cv2.LINE_AA,
+                image, (x, int(round(float(staff["top"]) * scale))),
+                (x, int(round(float(staff["bottom"]) * scale))),
+                20, max(1, int(round(scale))), cv2.LINE_AA,
             )
 
     for note in scene.get("notes", []):
-        cx, cy = [float(value) for value in note["center"]]
-        bbox = [float(value) for value in note["bbox"]]
+        cx, cy = [float(value) * scale for value in note["center"]]
+        bbox = [float(value) * scale for value in note["bbox"]]
         rx = max(2, int(round(bbox[2] / 2.0)))
         ry = max(2, int(round(bbox[3] / 2.0)))
         fit = note.get("geometry_refinement") or {}
@@ -306,14 +309,14 @@ def render_geometry_scene(shape: tuple[int, int], scene: dict) -> np.ndarray:
         thickness = -1 if class_name == "filled_head" else max(1, int(round(ry * 0.35)))
         cv2.ellipse(
             image, (int(round(cx)), int(round(cy))), (rx, ry), angle,
-            0, 360, 20, thickness, cv2.LINE_AA,
+            0, 360, 20, max(1, int(round(thickness * scale))) if thickness > 0 else -1, cv2.LINE_AA,
         )
 
     # Unknown regions are outlined lightly rather than silently omitted.
     for item in scene.get("unknown_objects", []):
-        x, y, box_width, box_height = [int(value) for value in item["bbox"]]
+        x, y, box_width, box_height = [int(round(float(value) * scale)) for value in item["bbox"]]
         cv2.rectangle(
-            image, (x, y), (x + box_width, y + box_height), 160, 1, cv2.LINE_AA
+            image, (x, y), (x + box_width, y + box_height), 160, max(1, int(round(scale))), cv2.LINE_AA
         )
     return image
 
