@@ -5,6 +5,11 @@
   "manifest_sha256": "b7c116caf40eb8b4b69cf48ec86ebb1c919a1b30461c7989681812e8abaa4c17",
   "pages_n": 3,
   "pages_source_bytes_preserved_n": 3,
+  "source_bytes_preserved_rate": 1.0,
+  "source_bytes_preserved_rate_wilson_95_ci": [
+    0.4385029682449546,
+    1.0
+  ],
   "sampling_note": "Pages are purposively selected. Intervals below describe page-level variation under an iid resampling model and do not support population generalization.",
   "coverage": {
     "pages_with_staff_detected": 2,
@@ -22,10 +27,10 @@
   },
   "runtime_summary": {
     "unit": "end_to_end_seconds_per_page",
-    "mean": 0.43381180533333336,
+    "mean": 0.4318225556666666,
     "mean_page_bootstrap_95_ci": [
-      0.414042708,
-      0.4609047500000001
+      0.417627459,
+      0.45398258299999994
     ],
     "bootstrap_unit": "page",
     "bootstrap_rounds": 2000,
@@ -77,8 +82,8 @@
       "notehead_proposals": 0,
       "unknown_regions": 0,
       "estimated_staffline_angle_deg": 0.179,
-      "analysis_runtime_seconds": 0.1217,
-      "end_to_end_runtime_seconds": 0.414042708,
+      "analysis_runtime_seconds": 0.1236,
+      "end_to_end_runtime_seconds": 0.417627459,
       "warnings": [
         "No five-line staff group detected. Preserve the source and review the page manually.",
         "No noteheads passed the current proposal classifier; the MusicXML will contain no inferred notes.",
@@ -108,8 +113,8 @@
       "notehead_proposals": 5,
       "unknown_regions": 4,
       "estimated_staffline_angle_deg": 1.829,
-      "analysis_runtime_seconds": 0.2789,
-      "end_to_end_runtime_seconds": 0.42648795800000006,
+      "analysis_runtime_seconds": 0.2751,
+      "end_to_end_runtime_seconds": 0.4238576249999999,
       "warnings": [
         "Estimated staff-line tilt is 1.83 degrees; this version does not rectify rotation or perspective.",
         "Pitch proposals assume treble clef and a C-major/no-accidental interpretation; key signatures and accidentals are not yet inferred.",
@@ -138,8 +143,8 @@
       "notehead_proposals": 40,
       "unknown_regions": 42,
       "estimated_staffline_angle_deg": 0.165,
-      "analysis_runtime_seconds": 0.3191,
-      "end_to_end_runtime_seconds": 0.4609047500000001,
+      "analysis_runtime_seconds": 0.3096,
+      "end_to_end_runtime_seconds": 0.45398258299999994,
       "warnings": [
         "Pitch proposals assume treble clef and a C-major/no-accidental interpretation; key signatures and accidentals are not yet inferred.",
         "Durations, voice assignments, instrument mapping and full score structure remain unresolved and are marked for review in MusicXML.",
