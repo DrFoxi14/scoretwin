@@ -105,4 +105,4 @@ Example:
 }
 \`\`\`
 
-The report includes per-page counts, precision/recall/F1, center error, pitch accuracy when labelled and page-bootstrap 95% intervals. These intervals describe variation across the supplied pages; they do not repair bias from a small or unrepresentative sample. Do not call this a real-photo benchmark unless the manifest actually references real photos with independently prepared annotations.
+The report includes per-page counts, precision/recall/F1, center error in pixels and staff spaces, pitch accuracy when labelled, and page-bootstrap 95% intervals for detection and normalized geometry error. These intervals describe variation across the supplied pages; they do not repair bias from a small or unrepresentative sample. Do not call this a real-photo benchmark unless the manifest actually references real photos with independently prepared annotations.

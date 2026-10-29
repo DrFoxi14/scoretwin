@@ -229,8 +229,14 @@ def test_annotated_manifest_evaluator_reports_page_bootstrap_intervals(tmp_path)
     result = evaluate_manifest(manifest_path, bootstrap_samples=100, bootstrap_seed=4)
     assert result["pages_n"] == 1
     assert result["ground_truth_noteheads_n"] == 5
-    assert set(result["precision_recall_f1_bootstrap_95_ci"]) == {"precision", "recall", "f1"}
+    intervals = result["precision_recall_f1_bootstrap_95_ci"]
+    assert set(intervals) == {
+        "precision", "recall", "f1", "mean_center_error_sp", "p95_center_error_sp"
+    }
+    assert intervals["f1"]["bootstrap_samples_valid"] == 100
+    assert intervals["mean_center_error_sp"]["lower_95"] is not None
     assert result["per_page"][0]["image_sha256"]
+    assert result["per_page"][0]["mean_center_error_staff_spaces"] is not None
     assert result["software"]["opencv"] == cv2.__version__
 
 
