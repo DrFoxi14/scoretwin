@@ -8,7 +8,7 @@ import numpy as np
 
 from scoretwin.benchmark import evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
-from scoretwin.imaging import detect_staff_systems, estimate_global_skew_degrees, extract_notehead_candidates, refine_notehead_geometry, staff_step_and_pitch
+from scoretwin.imaging import detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, refine_notehead_geometry, staff_step_and_pitch
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
 from scoretwin.proposal import load_model, predict_patch, save_model, train_proposal_model
@@ -43,6 +43,15 @@ def test_notehead_components_are_proposed_even_across_staff_lines():
     assert len(candidates) >= len(truth) - 2
     assert all(candidate["bbox"][2] > 0 and candidate["bbox"][3] > 0 for candidate in candidates)
     assert all("crop" in candidate for candidate in candidates)
+
+
+def test_detects_long_vertical_stem_candidates():
+    gray = synthetic_staff()
+    staffs, binary, _staff_mask = detect_staff_systems(gray)
+    candidates = detect_stem_candidates(binary, staffs, {0: []})
+    assert len(candidates) >= 2
+    assert all(candidate["length_px"] >= 2.0 * staffs[candidate["staff_index"]].spacing for candidate in candidates)
+    assert all(candidate["bbox"][2] <= max(3, round(0.42 * staffs[candidate["staff_index"]].spacing)) for candidate in candidates)
 
 
 def test_local_template_refinement_reduces_synthetic_center_error():
