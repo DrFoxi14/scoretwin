@@ -36,6 +36,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#ced7e5}a{color:#b7f36b}
 canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px solid #303949;touch-action:none}
 #pageCanvas{height:auto;display:block;background:#f4f4f4;cursor:crosshair}
 #cornerCanvas{height:auto;display:block;background:#f4f4f4;cursor:crosshair}
+#live-camera{width:100%;max-height:65vh;object-fit:contain;background:#080b10;border-radius:10px;border:1px solid #303949}
+#live-camera-panel{border-bottom:1px solid #303949;padding-bottom:14px;margin-bottom:16px}
 #scene3d{height:380px}.status{padding:10px 0;font-weight:600}
 @media(max-width:700px){.grid{grid-template-columns:1fr}canvas{height:300px}#pageCanvas{height:auto}#scene3d{height:300px}}
 </style>
@@ -44,6 +46,16 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <h1>ScoreTwin <span class="muted">/ IDSR</span></h1>
 <p class="muted">Geometry-first score digitization prototype. The source stays the identity anchor; symbolic proposals remain provisional.</p>
 <div class="panel">
+<section id="live-camera-panel">
+<h2>Live capture with guidance</h2>
+<p class="muted">Use the rear camera, keep all four page corners visible, avoid shadows, and wait for the ink to look sharp. Live hints are heuristic; the detailed check runs after capture.</p>
+<video id="live-camera" autoplay playsinline muted hidden aria-label="Live rear-camera preview of the score"></video>
+<canvas id="live-camera-sampler" width="192" height="144" hidden></canvas>
+<p id="live-quality-status" class="muted" role="status">Camera is off. You can also use the file picker below.</p>
+<button id="start-camera" type="button">Start rear camera</button>
+<button id="capture-frame" type="button" disabled>Capture frame</button>
+<button id="stop-camera" type="button" disabled>Stop camera</button>
+</section>
 <form id="upload"><label for="file">Choose an image or PDF</label><br><input id="file" name="file" type="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf"><br><label for="camera-file">Or take a photo with the phone camera</label><br><input id="camera-file" name="camera-file" type="file" accept="image/*" capture="environment"><br><label for="page">PDF page index (0-based; ignored for images)</label><br><input id="page" name="page" type="number" min="0" max="10000" value="0"><br><button id="submit" type="submit">Analyze page</button></form>
 <div id="corner-panel" hidden><h2>Optional perspective correction</h2><p class="muted">On a photo, tap the page corners in order: top left, top right, bottom right, bottom left. This assumes a flat page.</p><button id="mark-corners" type="button">Select four page corners</button><button id="clear-corners" type="button">Clear corners</button><p id="corner-status" class="muted" aria-live="polite"></p><canvas id="cornerCanvas" aria-label="Preview for selecting page corners"></canvas></div>
 <div id="status" class="status" role="status"></div>
@@ -83,6 +95,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 </div>
 <script>
 let currentScene=null, originalScene=null, backgroundPreviewPngBase64=null, residualPngBase64=null, identityReportJson=null, yaw=-0.38, tilt=-0.2, dragging=false, draggingNote=-1, lastX=0, lastY=0;
+let liveCameraStream=null, liveQualityTimer=null, liveCapturedFile=null;
 let cornerImage=null, cornerScaleX=1, cornerScaleY=1, cornerPoints=[], selectingCorners=false, cornerObjectUrl=null;
 const canvas=document.getElementById('scene3d'),ctx=canvas.getContext('2d');
 const pageCanvas=document.getElementById('pageCanvas'),pageCtx=pageCanvas.getContext('2d');
@@ -135,7 +148,7 @@ function drawPage(){
   pageCtx.strokeStyle='#e3b35b';pageCtx.lineWidth=1;pageCtx.strokeRect(x,y,w,h);
  });
 }
-function activeFile(){return document.getElementById('camera-file').files[0]||document.getElementById('file').files[0]||null;}
+function activeFile(){return liveCapturedFile||document.getElementById('camera-file').files[0]||document.getElementById('file').files[0]||null;}
 function drawCornerPage(){
  if(!cornerImage||!cornerImage.complete)return;
  cornerCtx.clearRect(0,0,cornerCanvas.width,cornerCanvas.height);
@@ -250,8 +263,99 @@ function buildEditor(){
  });
 }
 const form=document.getElementById('upload');
-document.getElementById('file').addEventListener('change',loadCornerPreview);
-document.getElementById('camera-file').addEventListener('change',loadCornerPreview);
+const liveVideo=document.getElementById('live-camera');
+const liveSampler=document.getElementById('live-camera-sampler');
+const liveSamplerCtx=liveSampler.getContext('2d',{willReadFrequently:true});
+function stopLiveCamera(){
+ if(liveQualityTimer!==null){clearInterval(liveQualityTimer);liveQualityTimer=null;}
+ if(liveCameraStream){liveCameraStream.getTracks().forEach(track=>track.stop());liveCameraStream=null;}
+ liveVideo.srcObject=null;liveVideo.hidden=true;
+ document.getElementById('start-camera').disabled=false;
+ document.getElementById('capture-frame').disabled=true;
+ document.getElementById('stop-camera').disabled=true;
+}
+function updateLiveQuality(){
+ if(!liveCameraStream||liveVideo.readyState<2||!liveVideo.videoWidth)return;
+ try{
+  liveSamplerCtx.drawImage(liveVideo,0,0,liveSampler.width,liveSampler.height);
+  const pixels=liveSamplerCtx.getImageData(0,0,liveSampler.width,liveSampler.height).data;
+  let sum=0,sumSq=0,minGray=255,maxGray=0,edgeSum=0,edgeCount=0;
+  const gray=new Float32Array(liveSampler.width*liveSampler.height);
+  for(let i=0,p=0;i<pixels.length;i+=4,p++){
+   const value=0.2126*pixels[i]+0.7152*pixels[i+1]+0.0722*pixels[i+2];
+   gray[p]=value;sum+=value;sumSq+=value*value;minGray=Math.min(minGray,value);maxGray=Math.max(maxGray,value);
+  }
+  for(let y=1;y<liveSampler.height-1;y++)for(let x=1;x<liveSampler.width-1;x++){
+   const p=y*liveSampler.width+x;
+   edgeSum+=Math.abs(gray[p]-gray[p-1])+Math.abs(gray[p]-gray[p-liveSampler.width]);
+   edgeCount+=2;
+  }
+  const count=gray.length,mean=sum/count,contrast=Math.sqrt(Math.max(0,sumSq/count-mean*mean)),edgeEnergy=edgeSum/Math.max(1,edgeCount);
+  const hints=[];
+  if(maxGray-minGray<20||contrast<12)hints.push('Low scene contrast: make sure the score is visible in the frame.');
+  if(mean<50)hints.push('Frame is very dark: add light without moving the phone.');
+  if(edgeEnergy<0.7)hints.push('Fine edges look weak: steady the phone and let focus settle.');
+  if(mean>253&&contrast<4)hints.push('Frame looks nearly blank or overexposed: check framing and exposure.');
+  document.getElementById('live-quality-status').textContent=[
+   'Live frame: '+liveVideo.videoWidth+'×'+liveVideo.videoHeight,
+   'Sampled contrast: '+contrast.toFixed(1)+' gray levels; edge energy: '+edgeEnergy.toFixed(2),
+   ...(hints.length?hints:['No live retake hint from this small preview sample. Full quality diagnostics follow analysis.']),
+   'These live thresholds are uncalibrated and never block capture.'
+  ].join(' · ');
+ }catch(error){
+  document.getElementById('live-quality-status').textContent='Live quality sample unavailable; you can still capture and use the post-capture diagnostics.';
+ }
+}
+document.getElementById('start-camera').addEventListener('click',async()=>{
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+  document.getElementById('live-quality-status').textContent='Live camera is unavailable in this browser/context. Use the camera file picker or image upload.';
+  return;
+ }
+ try{
+  stopLiveCamera();
+  liveCameraStream=await navigator.mediaDevices.getUserMedia({
+   audio:false,
+   video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}
+  });
+  liveVideo.srcObject=liveCameraStream;liveVideo.hidden=false;
+  await liveVideo.play();
+  document.getElementById('start-camera').disabled=true;
+  document.getElementById('capture-frame').disabled=false;
+  document.getElementById('stop-camera').disabled=false;
+  document.getElementById('live-quality-status').textContent='Rear camera active. Keep the page flat, whole and in focus.';
+  updateLiveQuality();
+  liveQualityTimer=setInterval(updateLiveQuality,900);
+ }catch(error){
+  stopLiveCamera();
+  document.getElementById('live-quality-status').textContent='Could not start the camera: '+(error.message||String(error))+' · Use the camera file picker instead.';
+ }
+});
+document.getElementById('stop-camera').addEventListener('click',()=>{
+ stopLiveCamera();
+ document.getElementById('live-quality-status').textContent='Camera stopped. The last captured frame, if any, remains selected for analysis.';
+});
+document.getElementById('capture-frame').addEventListener('click',async()=>{
+ if(!liveCameraStream||!liveVideo.videoWidth)return;
+ const scale=Math.min(1,2400/Math.max(liveVideo.videoWidth,liveVideo.videoHeight));
+ const output=document.createElement('canvas');
+ output.width=Math.max(1,Math.round(liveVideo.videoWidth*scale));
+ output.height=Math.max(1,Math.round(liveVideo.videoHeight*scale));
+ const outputCtx=output.getContext('2d');
+ outputCtx.drawImage(liveVideo,0,0,output.width,output.height);
+ const blob=await new Promise(resolve=>output.toBlob(resolve,'image/jpeg',0.95));
+ if(!blob){document.getElementById('live-quality-status').textContent='Capture failed; try again or use the camera file picker.';return;}
+ liveCapturedFile=new File([blob],'scoretwin-live-capture.jpg',{type:'image/jpeg',lastModified:Date.now()});
+ cornerPoints=[];selectingCorners=false;loadCornerPreview();
+ document.getElementById('live-quality-status').textContent='Frame captured: '+output.width+'×'+output.height+'. You can select four page corners, then analyze this frame.';
+ document.getElementById('status').textContent='Live camera frame selected. The uploaded JPEG created by the browser is now the source file for this analysis.';
+});
+document.getElementById('file').addEventListener('change',()=>{
+ liveCapturedFile=null;loadCornerPreview();
+});
+document.getElementById('camera-file').addEventListener('change',()=>{
+ liveCapturedFile=null;loadCornerPreview();
+});
+window.addEventListener('pagehide',stopLiveCamera);
 document.getElementById('mark-corners').addEventListener('click',()=>{
  cornerPoints=[];selectingCorners=true;drawCornerPage();
  document.getElementById('corner-status').textContent='Tap four corners clockwise, starting at the top left.';
@@ -271,7 +375,7 @@ cornerCanvas.addEventListener('pointerdown',event=>{
  else document.getElementById('corner-status').textContent='Corner '+cornerPoints.length+' of 4 selected.';
 });
 form.addEventListener('submit',async(event)=>{
- event.preventDefault();const file=document.getElementById('camera-file').files[0]||document.getElementById('file').files[0];if(!file){document.getElementById('status').textContent='Choose a file or take a photo first.';return;}
+ event.preventDefault();const file=activeFile();if(!file){document.getElementById('status').textContent='Capture a frame or choose a file first.';return;}
  const button=document.getElementById('submit');button.disabled=true;const status=document.getElementById('status');status.textContent='Processing locally…';
  try{
   const body=new FormData();body.append('file',file);body.append('page',document.getElementById('page').value||'0');
