@@ -91,10 +91,20 @@ Then open http://127.0.0.1:8000. Uploaded files are processed by the local serve
 - scene.json: staff geometry, a primitive graph, typed relations, continuous pitch-position offsets, source provenance, software versions, model-training metadata and warnings;
 - overlay.png: source image with staff/notehead proposals;
 - geometry-render.png: structural render of the currently modeled primitives (not a complete/pixel-identical page render);
-- scene.gltf: self-contained glTF 2.0 meshes for staff lines, barlines, noteheads, linked stems and unresolved regions, with IDs/provenance/uncertainty in per-node extras;
+- residual-offset255.png: uint16 PNG encoding of the signed grayscale pixel residual plus 255;
+- reconstructed-analysis.png: pixel-exact recomposition of the decoded grayscale analysis raster;
+- identity-reconstruction.json: SHA-256 values, pixel mismatch count, maximum absolute error and the scope/limits of the exact-recomposition guarantee;
+- scene.gltf: self-contained glTF 2.0 geometry and embedded analysis-raster texture, with IDs/provenance/uncertainty/relations in per-node extras;
 - provisional.musicxml: XML output carrying explicit review markers.
 
 Unresolved regions include a heuristic reason such as low local contrast, low local sharpness/blur, or an unfamiliar/uncertain mark. These thresholds are not calibrated; the UI explicitly treats them as diagnostic hints, not probabilities.
+
+### Exact residual reconstruction
+
+The bundle renders the currently modeled primitives into an 8-bit grayscale image \(G\), then computes the signed residual \(R=I-G\) against the decoded grayscale analysis raster \(I\). Because \(R\) ranges from \(-255\) to \(255\), the stored PNG uses unsigned 16-bit values \(R_{16}=R+255\). Recomposing \(I'=G+R_{16}-255\) recovers every analysis-raster sample exactly when the stored files are read back. The pipeline checks this with an array equality assertion and reports the mismatch count and maximum absolute error in \`identity-reconstruction.json\`.
+
+This is a lossless identity anchor for the **analysis grayscale raster**, not for color information already lost by grayscale decoding, and not proof that the scene graph or MusicXML is correct. The original upload is preserved separately byte-for-byte and hash-checked. The residual is not advertised as compressed; PNG compression only encodes the uint16 residual image losslessly.
+
 
 The preserved source is the lossless identity anchor. The overlay is a diagnostic layer, not a claim that all original ink has been parsed into primitives. The 3D view uses a semantic layer offset; it is not a measurement of the physical relief of ink.
 
