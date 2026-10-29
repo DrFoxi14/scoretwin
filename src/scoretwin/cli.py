@@ -14,6 +14,7 @@ import cv2
 from .benchmark import evaluate_perspective_capture, evaluate_synthetic
 from .benchmark_manifest import evaluate_manifest
 from .benchmark_photo_smoke import evaluate_photo_smoke
+from .calibration import evaluate_human_calibration
 from .gltf_export import validate_embedded_gltf
 from .imaging import load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral
 from .metrics import compare_idsr_components, measure_bundle_storage
@@ -84,6 +85,15 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--tolerance-sp", type=float, default=0.35)
     manifest.add_argument("--bootstrap-samples", type=int, default=1000)
     manifest.add_argument("--bootstrap-seed", type=int, default=20261029)
+
+    calibrate = commands.add_parser(
+        "calibrate-human",
+        help="Analyze blinded human identity ratings; does not invent ratings or fit DID weights",
+    )
+    calibrate.add_argument("--study", type=Path, required=True, help="scoretwin-human-calibration-v1 JSON")
+    calibrate.add_argument("--out", type=Path, required=True, help="Calibration report JSON path")
+    calibrate.add_argument("--bootstrap-samples", type=int, default=2000)
+    calibrate.add_argument("--bootstrap-seed", type=int, default=20261029)
 
     photo_smoke = commands.add_parser(
         "evaluate-photo-smoke",
@@ -234,6 +244,26 @@ def main() -> None:
             "f1": result["f1"],
             "confidence_intervals": result["precision_recall_f1_bootstrap_95_ci"],
         }, indent=2, ensure_ascii=False))
+    elif args.command == "calibrate-human":
+        study = json.loads(args.study.read_text(encoding="utf-8"))
+        report = evaluate_human_calibration(
+            study,
+            bootstrap_samples=args.bootstrap_samples,
+            bootstrap_seed=args.bootstrap_seed,
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
+        print(json.dumps({
+            "report_path": str(args.out),
+            "pair_count": report["pair_count"],
+            "independence_group_count": report["independence_group_count"],
+            "rater_count": report["rater_count"],
+            "total_rating_count": report["total_rating_count"],
+            "metric_human_associations": report["metric_human_associations"],
+            "inter_rater_agreement": report["inter_rater_agreement"]["mean_pairwise_quadratic_weighted_kappa"],
+            "repeat_consistency": report["within_rater_repeat_consistency"]["exact_repeat_agreement_rate"],
+            "scalar_did_weights": report["scalar_did_weights"],
+        }, indent=2, ensure_ascii=False, allow_nan=False))
     elif args.command == "evaluate-photo-smoke":
         result = evaluate_photo_smoke(args.manifest, model_path=args.model)
         args.out.parent.mkdir(parents=True, exist_ok=True)
