@@ -370,6 +370,67 @@ def extract_notehead_candidates(
         candidate["id"] = f"proposal-{index:04d}"
     return kept
 
+
+def detect_stem_candidates(
+    binary: np.ndarray,
+    staffs: list[StaffSystem],
+    barlines_by_staff: dict[int, list[int]] | None = None,
+) -> list[dict]:
+    """Detect long, narrow vertical strokes near five-line staff systems.
+
+    These are only stem/barline hypotheses. Association to noteheads and exclusion
+    of barlines happen in the pipeline; flags, beams and stem direction are not
+    inferred by this function.
+    """
+    if binary.ndim != 2:
+        raise ValueError("Expected a 2D binary image.")
+    barlines_by_staff = barlines_by_staff or {}
+    all_candidates: list[dict] = []
+    for staff in staffs:
+        staff_index = int(staff.index)
+        spacing = float(staff.spacing)
+        kernel_height = max(7, int(round(2.25 * spacing)))
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, kernel_height))
+        vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vertical_kernel)
+        top_limit = max(0, int(round(staff.top - 3.0 * spacing)))
+        bottom_limit = min(binary.shape[0], int(round(staff.bottom + 3.0 * spacing)) + 1)
+        count, _labels, stats, centroids = cv2.connectedComponentsWithStats(
+            vertical[top_limit:bottom_limit, :], 8
+        )
+        bar_xs = [float(x) for x in barlines_by_staff.get(staff_index, [])]
+        for component in range(1, count):
+            x, y_local, w, h, area = [int(value) for value in stats[component]]
+            cy = float(centroids[component][1]) + top_limit
+            cx = float(centroids[component][0])
+            y = y_local + top_limit
+            if h < 2.0 * spacing or w > max(3, int(round(0.42 * spacing))):
+                continue
+            if area < h * 0.45:
+                continue
+            if any(abs(cx - bar_x) <= 0.30 * spacing for bar_x in bar_xs):
+                continue
+            all_candidates.append({
+                "staff_index": staff_index,
+                "bbox": [x, y, w, h],
+                "center": [round(cx, 3), round(cy, 3)],
+                "length_px": int(h),
+                "provenance": "vertical_morphology",
+            })
+
+    all_candidates.sort(key=lambda item: (item["staff_index"], item["center"][0], item["bbox"][1]))
+    kept: list[dict] = []
+    for candidate in all_candidates:
+        duplicate = any(
+            candidate["staff_index"] == other["staff_index"]
+            and abs(candidate["center"][0] - other["center"][0]) <= 1.0
+            and abs(candidate["center"][1] - other["center"][1]) <= 0.5 * candidate["length_px"]
+            for other in kept
+        )
+        if not duplicate:
+            candidate["id"] = f"stem-candidate-{len(kept):04d}"
+            kept.append(candidate)
+    return kept
+
 def refine_notehead_geometry(
     gray: np.ndarray,
     binary: np.ndarray,
