@@ -10,9 +10,9 @@ This repository contains a runnable research prototype:
 - five-line staff detection;
 - notehead proposals that attempt to reconstruct fragments cut by staff lines;
 - a small synthetic patch classifier, trainable locally;
-- a geometry-first scene JSON with source hash and uncertainty flags;
-- a diagnostic 2D overlay and an interactive semantic-layer view;
-- editable pitch proposals and provisional MusicXML export, with uncertain durations and score structure marked for review;
+- a provenance-aware geometry graph (staff systems, staff lines, barlines, notehead proposals, unknown regions and typed relations) with pixel coordinates and uncertainty flags;
+- a source-aligned 2D editor for dragging notehead proposals and an interactive semantic-layer view in 3D;
+- editable pitch proposals, downloadable scene JSON and provisional MusicXML export, with uncertain durations and score structure marked for review;
 - a local browser UI, CLI, synthetic-page generator and synthetic regression benchmark;
 - tests and a GitHub Actions workflow.
 
@@ -51,12 +51,12 @@ Run the browser app:
 
     scoretwin serve --host 127.0.0.1 --port 8000
 
-Then open http://127.0.0.1:8000. Uploaded files are processed by the local server process. No remote inference API is used by this prototype.
+Then open http://127.0.0.1:8000. Uploaded files are processed by the local server process. No remote inference API is used by this prototype. After edits, use **Download edited scene JSON** to keep the adjusted geometry and pitch proposals; **Regenerate MusicXML from edits** exports the current symbolic projection.
 
 ## Output bundle
 
 - source file copied byte-for-byte to the bundle and verified by SHA-256;
-- scene.json: staff geometry, proposals, pitch-position estimates, provenance and warnings;
+- scene.json: staff geometry, a primitive graph, typed relations, continuous pitch-position offsets, provenance and warnings;
 - overlay.png: diagnostic visualization;
 - provisional.musicxml: XML output carrying explicit review markers.
 

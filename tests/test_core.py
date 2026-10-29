@@ -97,6 +97,12 @@ def test_pipeline_creates_bundle_and_preserves_source_bytes(tmp_path):
     image_path.write_bytes(source_bytes)
 
     result = process_file(image_path, output_dir)
+    saved_scene = __import__("json").loads((output_dir / "scene.json").read_text(encoding="utf-8"))
+    assert saved_scene["schema"] == "scoretwin-scene-0.1"
+    assert any(primitive["kind"] == "staffline" for primitive in saved_scene["primitives"])
+    assert any(relation["type"] == "member_of" for relation in saved_scene["relations"])
+    assert saved_scene["source"]["sha256"] == result["source_sha256"]
+    assert saved_scene["source"]["preserved_losslessly"] is True
     preserved_path = output_dir / "source-original.png"
     assert preserved_path.read_bytes() == source_bytes
     expected_hash = hashlib.sha256(source_bytes).hexdigest()
