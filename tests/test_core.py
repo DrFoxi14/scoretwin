@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
+from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import cv2
@@ -393,6 +395,22 @@ def test_human_calibration_reports_rank_correlation_kappa_and_repeat_consistency
     assert report["within_rater_repeat_consistency"]["exact_repeat_agreement_rate"] == pytest.approx(1.0)
     assert report["scalar_did_weights"] is None
     assert recommended_study_design()["planned_unique_pairs_with_20_percent_exclusion_margin"] >= 50
+
+
+def test_checked_in_human_calibration_example_is_explicitly_not_real_data():
+    root = Path(__file__).resolve().parents[1]
+    example_path = root / "schemas" / "scoretwin-human-calibration-example.json"
+    protocol_path = root / "docs" / "HUMAN_CALIBRATION_PROTOCOL.md"
+    assert example_path.is_file()
+    assert protocol_path.is_file()
+    example = json.loads(example_path.read_text(encoding="utf-8"))
+    assert example["schema"] == "scoretwin-human-calibration-v1"
+    assert example["study_design"]["example_not_data"] is True
+    assert any(pair.get("repeat_group") for pair in example["pairs"])
+    report = evaluate_human_calibration(example, bootstrap_samples=100, bootstrap_seed=17)
+    assert report["data_status"].startswith("human ratings supplied")
+    assert report["pair_count"] == 2
+    assert report["scalar_did_weights"] is None
 
 
 def test_human_calibration_rejects_invalid_schema_ratings_and_directions():
