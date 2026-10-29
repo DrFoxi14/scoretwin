@@ -279,6 +279,8 @@ form.addEventListener('submit',async(event)=>{
   currentScene.source=result.source;
   originalScene=JSON.parse(JSON.stringify(currentScene));
   backgroundPreviewPngBase64=result.source_preview_png_base64;
+  residualPngBase64=result.residual_png_base64||null;
+  identityReportJson=result.identity_report_json||JSON.stringify(result.identity_reconstruction||{},null,2);
   sourcePreview.src='data:image/png;base64,'+result.source_preview_png_base64;
   document.getElementById('summary').textContent=JSON.stringify(result.summary,null,2);
   const unresolved=(currentScene.unknown_objects||[]).map(item=>item.id+': '+item.reason);
