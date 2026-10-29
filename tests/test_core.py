@@ -136,6 +136,10 @@ def test_pipeline_creates_bundle_and_preserves_source_bytes(tmp_path):
     assert result["source_hash_verified"] is True
     assert (output_dir / "scene.json").exists()
     assert (output_dir / "overlay.png").exists()
+    assert (output_dir / "geometry-render.png").exists()
+    geometry_render = cv2.imread(str(output_dir / "geometry-render.png"), cv2.IMREAD_GRAYSCALE)
+    assert geometry_render is not None and geometry_render.shape == original.shape
+    assert int(geometry_render.min()) < 255
     assert (output_dir / "provisional.musicxml").exists()
     ET.parse(output_dir / "provisional.musicxml")
 

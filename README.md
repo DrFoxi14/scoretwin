@@ -11,7 +11,7 @@ This repository contains a runnable research prototype:
 - notehead proposals that attempt to reconstruct fragments cut by staff lines, followed by a bounded local template-fit refinement;
 - a small synthetic patch classifier, trainable locally;
 - a provenance-aware geometry graph (staff systems, staff lines, barlines, notehead proposals, unknown regions and typed relations) with pixel coordinates and uncertainty flags;
-- a source-aligned 2D editor for dragging notehead proposals and an interactive semantic-layer view in 3D;
+- a source-aligned 2D editor for dragging notehead proposals, a separate structural 2D render of known primitives, and an interactive semantic-layer view in 3D;
 - editable pitch proposals, downloadable scene JSON and provisional MusicXML export, with uncertain durations and score structure marked for review;
 - a local browser UI, CLI, synthetic-page generator and synthetic regression benchmark;
 - tests and a GitHub Actions workflow.
@@ -57,7 +57,8 @@ Then open http://127.0.0.1:8000. Uploaded files are processed by the local serve
 
 - source file copied byte-for-byte to the bundle and verified by SHA-256;
 - scene.json: staff geometry, a primitive graph, typed relations, continuous pitch-position offsets, provenance and warnings;
-- overlay.png: diagnostic visualization;
+- overlay.png: source image with staff/notehead proposals;
+- geometry-render.png: structural render of the currently modeled primitives (not a complete/pixel-identical page render);
 - provisional.musicxml: XML output carrying explicit review markers.
 
 The preserved source is the lossless identity anchor. The overlay is a diagnostic layer, not a claim that all original ink has been parsed into primitives. The 3D view uses a semantic layer offset; it is not a measurement of the physical relief of ink.
