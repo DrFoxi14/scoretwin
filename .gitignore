@@ -16,4 +16,5 @@ scoretwin-run/
 scoretwin-demo/
 runs/
 manifest-evaluation.json
+results/local-photo-smoke-manifest.json
 synthetic-evaluation.json
