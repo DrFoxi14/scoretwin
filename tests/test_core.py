@@ -966,6 +966,30 @@ def test_photo_smoke_reports_source_identity_without_claiming_accuracy(tmp_path)
     assert report["per_page"][0]["source_bytes_preserved"] is True
 
 
+def test_image_only_color_pdf_preserves_native_bgr_samples(tmp_path):
+    import fitz
+
+    gray, _truth = generate_synthetic_page(seed=42, staff_count=1, notes_per_staff=5)
+    color = np.stack([
+        gray,
+        np.clip(gray.astype(np.int16) * 3 // 4 + 25, 0, 255).astype(np.uint8),
+        np.clip(gray.astype(np.int16) // 2 + 60, 0, 255).astype(np.uint8),
+    ], axis=2)
+    ok, encoded = cv2.imencode(".png", color)
+    assert ok
+    document = fitz.open()
+    page = document.new_page(width=color.shape[1], height=color.shape[0])
+    page.insert_image(page.rect, stream=encoded.tobytes())
+    pdf_path = tmp_path / "full-page-color-raster.pdf"
+    document.save(pdf_path)
+    document.close()
+
+    loaded = load_pixel_array(pdf_path, page=0, dpi=300)
+
+    assert loaded.shape == color.shape
+    assert np.array_equal(loaded, color)
+
+
 def test_image_only_pdf_uses_native_page_raster_without_dpi_upsampling(tmp_path):
     import fitz
 
