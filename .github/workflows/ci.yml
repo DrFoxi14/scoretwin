@@ -1,0 +1,26 @@
+name: ScoreTwin CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[test]"
+      - name: Test
+        run: pytest
+      - name: Train proposal smoke test
+        run: scoretwin train-model --out /tmp/proposal.npz --samples-per-class 120 --epochs 20 --seed 19
+      - name: Verify CLI entry point
+        run: scoretwin --help
