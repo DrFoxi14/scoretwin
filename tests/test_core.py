@@ -412,6 +412,10 @@ def test_gltf_export_is_self_contained_and_preserves_scene_metadata():
     assert note_node["extras"]["idsr"]["semantic_layer_z"] > 7.5
     stem_node = next(node for node in gltf["nodes"] if node["name"] == "stem-1")
     assert stem_node["extras"]["idsr"]["relations"]["stem_of"] == ["note-1"]
+    assert stem_node["extras"]["idsr"]["semantic_layer_z"] == note_node["extras"]["idsr"]["semantic_layer_z"]
+    unknown_node = next(node for node in gltf["nodes"] if node["name"] == "unknown-1")
+    unknown_mesh = gltf["meshes"][unknown_node["mesh"]]["primitives"][0]
+    assert gltf["accessors"][unknown_mesh["attributes"]["POSITION"]]["count"] == 16
 
 
 def test_gltf_export_handles_an_empty_scene_with_a_valid_buffer():
