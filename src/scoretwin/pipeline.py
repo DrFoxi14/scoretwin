@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from . import __version__
 from .imaging import detect_barlines, detect_staff_systems, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, refine_notehead_geometry, staff_step_and_pitch
 from .musicxml import build_musicxml
 from .proposal import get_default_model, load_model, predict_patch
@@ -38,8 +40,10 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
     estimated_skew = estimate_global_skew_degrees(gray)
     staffs, binary, staff_mask = detect_staff_systems(gray)
     candidates = extract_notehead_candidates(gray, binary, staff_mask, staffs)
+    model_training_metrics: dict = {}
     if candidates:
         proposal_model = model if model is not None else get_default_model()
+        model_training_metrics = dict(proposal_model.get("training_metrics", {}))
         classified = _classify_candidates(candidates, proposal_model)
     else:
         classified = []
@@ -274,6 +278,21 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
         "proposal_count": len(classified),
         "note_count": len(notes),
         "warnings": warnings,
+        "reproducibility": {
+            "software": {
+                "scoretwin": __version__,
+                "python": platform.python_version(),
+                "platform": platform.platform(),
+                "numpy": np.__version__,
+                "opencv": cv2.__version__,
+            },
+            "proposal_model": {
+                "kind": "linear-softmax-classifier-on-synthetic-16x16-patches",
+                "training_metrics": model_training_metrics,
+                "confidence_calibrated": False,
+                "geometry_refinement": "bounded-local-template-correlation",
+            },
+        },
         "runtime_seconds": round(time.perf_counter() - started, 4),
     }
 
@@ -364,6 +383,11 @@ def process_file(
     gray = load_grayscale(source, page=page)
     model = load_model(model_path) if model_path else get_default_model()
     scene = analyze_array(gray, model=model)
+    if model_path is not None:
+        model_file = Path(model_path)
+        scene["reproducibility"]["proposal_model"]["checkpoint_path"] = str(model_file)
+        scene["reproducibility"]["proposal_model"]["checkpoint_sha256"] = hashlib.sha256(model_file.read_bytes()).hexdigest()
+
     scene["source"] = {
         "filename": source.name,
         "sha256": source_hash,
