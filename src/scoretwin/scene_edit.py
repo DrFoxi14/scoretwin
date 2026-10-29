@@ -21,6 +21,8 @@ def promote_unknown_region(scene: dict, region_id: str) -> dict:
 
     try:
         staff_index = int(region["staff_index"])
+        if staff_index < 0 or staff_index >= len(updated["staffs"]):
+            raise ValueError("Unknown region refers to a staff index outside the current scene.")
         staff = updated["staffs"][staff_index]
         center = [float(region["center"][0]), float(region["center"][1])]
         bbox = [int(value) for value in region["bbox"]]
