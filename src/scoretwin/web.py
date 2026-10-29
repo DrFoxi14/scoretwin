@@ -74,13 +74,29 @@ function pagePoint(event){
  return [(event.clientX-rect.left)/rect.width*currentScene.image.width,
          (event.clientY-rect.top)/rect.height*currentScene.image.height];
 }
+function syncPrimitive(note){
+ const primitive=(currentScene.primitives||[]).find(item=>item.id===(note.primitive_id||note.id));
+ if(!primitive)return;
+ const box=note.bbox;
+ primitive.geometry.center_x_px=Number(note.center[0]);
+ primitive.geometry.center_y_px=Number(note.center[1]);
+ primitive.geometry.radius_x_px=Number(box[2])/2;
+ primitive.geometry.radius_y_px=Number(box[3])/2;
+ primitive.geometry.bbox_px=box.slice();
+ primitive.symbolic=primitive.symbolic||{};
+ primitive.symbolic.pitch_proposal={...note.pitch};
+}
 function updatePitchFromGeometry(note){
  const staff=currentScene.staffs[note.staff_index];if(!staff)return;
- const step=Math.round((staff.bottom-note.center[1])/(staff.spacing/2));
+ const continuous=(staff.bottom-note.center[1])/(staff.spacing/2);
+ const step=Math.round(continuous);
  const letters=['C','D','E','F','G','A','B'],absoluteIndex=2+step;
  const octaveDelta=Math.floor(absoluteIndex/7),letterIndex=((absoluteIndex%7)+7)%7;
  note.diatonic_step_from_bottom_line=step;
+ note.continuous_staff_step=continuous;
+ note.staff_position_offset_steps=continuous-step;
  if(!note.manually_edited_pitch)note.pitch={step:letters[letterIndex],octave:4+octaveDelta};
+ syncPrimitive(note);
 }
 function drawPage(){
  if(!currentScene||!sourcePreview.complete)return;
@@ -161,6 +177,7 @@ function buildEditor(){
    currentScene.notes[index].pitch={step:match[1],octave:Number(match[2])};
    currentScene.notes[index].uncertainty=currentScene.notes[index].uncertainty||[];
    currentScene.notes[index].manually_edited_pitch=true;
+   syncPrimitive(currentScene.notes[index]);
    draw3d();drawPage();
   });
   row.append(title,select);holder.appendChild(row);
