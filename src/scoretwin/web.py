@@ -286,6 +286,17 @@ form.addEventListener('submit',async(event)=>{
   const unresolved=(currentScene.unknown_objects||[]).map(item=>item.id+': '+item.reason);
   document.getElementById('warnings').textContent=[...result.warnings,...unresolved].join('\n');
   document.getElementById('geometry-render').src='data:image/png;base64,'+result.geometry_render_png_base64;
+  const proof=result.identity_reconstruction||{};
+  document.getElementById('identity-summary').textContent=[
+   'Exact pixel recomposition: '+(proof.exact_pixel_reconstruction_verified?'PASS':'FAIL'),
+   'Mismatched pixels: '+(proof.mismatched_pixel_count??'not reported'),
+   'Maximum absolute pixel error: '+(proof.maximum_absolute_pixel_error??'not reported'),
+   'Raster pixels: '+(proof.pixel_count??'not reported'),
+   'Residual PNG: '+(result.residual_download_available?'available for direct download':'kept in the full local bundle; too large for browser inline delivery'),
+   'Scope: '+(proof.applies_to||'decoded analysis raster only')
+  ].join('\\n');
+  document.getElementById('download-residual').disabled=!residualPngBase64;
+  document.getElementById('download-identity-report').disabled=!identityReportJson;
   setDownload(result.musicxml);document.getElementById('results').hidden=false;
   buildEditor();draw3d();
   status.textContent='Analysis finished. Review every pitch and all warnings before using the MusicXML.';
