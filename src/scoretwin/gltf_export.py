@@ -362,7 +362,12 @@ def build_gltf(
                             "pitch",
                             "voice",
                             "duration",
+                            "duration_ticks",
                             "duration_hypothesis",
+                            "type",
+                            "onset",
+                            "onset_ticks",
+                            "accidental",
                             "stem_ids",
                         )
                         if note.get(key) is not None
@@ -524,6 +529,7 @@ def build_gltf(
                 if background_resolution is not None else False
             ),
             "source_schema": scene.get("schema"),
+            "timing_units": scene.get("timing_units", "legacy"),
             "image": {"width_px": page_width, "height_px": page_height},
             "coordinate_frame": scene.get("coordinate_frame", "source_raster_pixel_centers"),
             "coordinate_units": "one glTF unit equals one page pixel in X/Y",
