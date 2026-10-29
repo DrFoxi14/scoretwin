@@ -13,6 +13,7 @@ This repository contains a runnable research prototype:
 - a provenance-aware geometry graph (staff systems, staff lines, barlines, notehead proposals, unknown regions and typed relations) with pixel coordinates and uncertainty flags;
 - a source-aligned 2D editor for dragging notehead proposals, a separate structural 2D render of known primitives, and an interactive semantic-layer view in 3D;
 - editable pitch proposals, downloadable scene JSON and provisional MusicXML export, with uncertain durations and score structure marked for review;
+- MusicXML serialization for explicitly annotated chord groups, voices, accidentals and repeated systems; those fields remain unrecognized from pixels;
 - a local browser UI, CLI, synthetic-page generator and synthetic regression benchmark;
 - tests and a GitHub Actions workflow.
 
@@ -33,7 +34,11 @@ Create and analyze a synthetic example (a useful first smoke test):
 
 Evaluate notehead proposals on generated pages, with exact synthetic notehead-center ground truth:
 
-    scoretwin evaluate-synthetic --pages 16 --seed 20261029 --out ./results/synthetic-evaluation.json
+    scoretwin evaluate-synthetic --pages 100 --seed 20261029 --noise-sigma 2 --blur-sigma 0.35 --contract-staff-spaces 0.3 --out ./results/synthetic-capture-pilot-2026-10-29.json
+
+Compare a clean synthetic source page, its projective camera simulation, and correction using exact page corners:
+
+    scoretwin evaluate-perspective --pages 100 --seed 20261029 --noise-sigma 2 --blur-sigma 0.35 --contract-staff-spaces 0.3 --out ./results/perspective-capture-pilot-2026-10-29.json
 
 Evaluate a separately annotated manifest (the command does not manufacture ground truth):
 
@@ -47,15 +52,67 @@ Analyze one image:
 
     scoretwin analyze ./score.png --out ./runs/score
 
+Validate the emitted 3D scene independently:
+
+    scoretwin validate-gltf ./runs/score/scene.gltf
+
+Compare a reference raster with a candidate render. The command reports a component vector, not an uncalibrated scalar DID:
+
+    scoretwin compare ./reference.png ./candidate.png --out ./runs/compare.json
+
+Add reviewed scene JSONs to score note geometry and typed relationship comparisons, using the reference staff-space calibration:
+
+    scoretwin compare ./reference.png ./candidate.png --reference-scene ./reference-scene.json --candidate-scene ./candidate-scene.json --staff-space-px 16 --out ./runs/compare.json
+
+The reference and candidate images must use the same dimensions, coordinate frame and decoded channel representation. With rectified scenes, compare the corresponding \`analysis-raster-pixels.png\` outputs, not the original unrectified photos. Optional masks can be added with \`--reference-mask\` and \`--candidate-mask\`. The report includes photometric exactness/MAE/MSE/PSNR, zlib residual-size bits per pixel, optional mask IoU/F1, center precision/recall/F1 and staff-space localization, pitch accuracy on labelled matches, and typed-relation F1. The zlib figure is a codec-specific residual-compressibility proxy, **not** a model-based MDL result.
+
+The report intentionally leaves \`aggregate_did\` unset. A weighted scalar must wait for a preregistered human-calibration study; choosing arbitrary weights would look quantitative while hiding an unvalidated value judgment. If masks are supplied, the same report also tests one-pixel dilation/erosion, blur-then-threshold, and deletion of the smallest disconnected foreground component. These are perturbation probes, not quality improvements. Removing one small component can leave global IoU deceptively high when the remaining ink dominates the union; object-level recall and photometric/boundary metrics are separate checks.
+
+Measure the actual artifact bundle size, excluding the byte-identical source copy so it cannot trivially "win" by embedding the input:
+
+    scoretwin measure-bundle ./runs/score --out ./runs/score-storage.json
+
+The command includes all other files in the analysis bundle, including the residual, structural previews, scene graph, MusicXML and textured glTF. It reports stored artifact bits per page pixel with a hash/size manifest. This is storage accounting—not formal MDL or an oracle comparison—and its report is written outside the measured bundle to avoid self-referential byte counts.
+
+### Human identity calibration
+
+No scalar DID is released as validated until there are blinded human ratings. The calibration command consumes a study manifest; it never fabricates ratings:
+
+    scoretwin calibrate-human --study ./study/human-ratings.json --out ./results/human-calibration.json --bootstrap-samples 2000
+
+The input schema is \`scoretwin-human-calibration-v1\`, with a 1–7 identity rating per rater/pair, a declared direction for each component (higher/lower means more identical), an independence-group key for source-piece clustering, and optional \`repeat_group\` IDs for hidden repeats. The report calculates Spearman associations with source-group bootstrap intervals, pairwise quadratic-weighted kappa, within-rater repeat agreement and a study-size planning heuristic. Repeated comparisons are collapsed before correlation so repeats do not inflate the independent-pair count.
+
+For a first preregistered study, the current planning heuristic recommends roughly 60 unique comparison pairs across at least 5 independent raters, plus about 10 hidden repeats per rater. The underlying approximation targets \`|rho|=0.4\`, two-sided \`alpha=0.05\`, and 80% power under a Fisher-z approximation; it is not a guarantee and should be checked with pilot/simulation before preregistration. Include clearly identical, clearly different, ambiguous, adversarial and out-of-distribution cases; randomize order and keep raters blind to system identity.
+
+
 Analyze a PDF page (zero-indexed page number):
 
     scoretwin analyze ./score.pdf --page 0 --out ./runs/score
+
+Create an optional global-rotation preview with a reversible transform back to source coordinates:
+
+    scoretwin rectify-preview ./score.jpg --out ./runs/rectification
+
+The bundle stores a byte-identical source copy, a resampled preview, and both coordinate transforms. This is a capture diagnostic; the default OMR analysis still runs on the source raster. It handles one global rotation only, not perspective, page curl, or local deformation.
+
+For a perspective photo, manually select the page corners in top-left, top-right, bottom-right, bottom-left order, then pass those source-raster pixel coordinates as JSON:
+
+    scoretwin rectify-preview ./score.jpg --corners-json '[[42,31],[1420,77],[1375,1980],[18,1902]]' --out ./runs/page-rectification
+    scoretwin analyze ./score.jpg --corners-json '[[42,31],[1420,77],[1375,1980],[18,1902]]' --out ./runs/score-rectified
+
+The transform maps those four points to a rectangle and records the forward and inverse homographies. It assumes the page is planar and the corners are correct; it does not automatically detect the page or flatten curvature, folds, or local warping. The source file remains byte-identical in the analysis bundle.
+
+To opt in to analyzing the rectified raster while retaining source coordinates in the scene metadata:
+
+    scoretwin analyze ./score.jpg --rectify-skew --out ./runs/score-rectified
+
+The overlay and structural render use the analysis raster; `source-original.*` remains byte-identical, and `scene.json` plus `capture-transform.json` include mappings back to rasterized source coordinates.
 
 Run the browser app:
 
     scoretwin serve --host 127.0.0.1 --port 8000
 
-Then open http://127.0.0.1:8000. Uploaded files are processed by the local server process. No remote inference API is used by this prototype. After edits, use **Download edited scene JSON** to keep the adjusted geometry and pitch proposals; **Regenerate MusicXML from edits** exports the current symbolic projection.
+Then open http://127.0.0.1:8000. Uploaded files are processed by the local server process. No remote inference API is used by this prototype. The browser also offers **Start rear camera**, a live preview, a coarse live-frame hint, **Capture 3-frame burst (select sharpest)**, and **Stop camera**. It captures up to three frames, scores each small preview by an uncalibrated contrast/edge-energy heuristic, and selects one JPEG as the uploaded source. It does **not** align or fuse frames, so this is not super-resolution or multi-frame denoising. Frame scores, selected dimensions and the non-fusion flag are included as client-reported source metadata; the server validates their shape but cannot independently verify the capture process. The chosen JPEG bytes are then preserved independently. Camera access requires a browser context that allows getUserMedia (normally HTTPS or localhost) and user permission. If unavailable, the standard phone camera file picker and ordinary upload remain available. The browser displays capture-quality diagnostics after analysis: dynamic range, a normalized Laplacian sharpness heuristic, background illumination variation, and specific retake suggestions. These thresholds are marked uncalibrated; a good quality report does not prove the score was understood, and a warning does not automatically reject the capture. On an image, **Select four page corners** enables a clockwise tap sequence from top-left through bottom-left; analysis applies the corresponding planar homography and records its inverse. This is optional and does not flatten a curled page. The editor lets you adjust pitch, accidental, duration (whole through 64th), voice, and onset ticks for each note proposal. Duration selection switches to a declared 16-ticks-per-quarter representation; selected durations remain user edits, not automatically verified rhythm. Setting an onset writes tick positions for all events in that measure/voice, including members of a geometric chord group, and rejects an onset earlier than the previous event end. **Regenerate MusicXML from edits** exports the current symbolic projection, and **Download edited scene JSON** keeps the modified note fields and geometry.
 
 ## Output bundle
 
@@ -63,11 +120,31 @@ Then open http://127.0.0.1:8000. Uploaded files are processed by the local serve
 - scene.json: staff geometry, a primitive graph, typed relations, continuous pitch-position offsets, source provenance, software versions, model-training metadata and warnings;
 - overlay.png: source image with staff/notehead proposals;
 - geometry-render.png: structural render of the currently modeled primitives (not a complete/pixel-identical page render);
+- analysis-raster-pixels.png: the decoded grayscale or BGR analysis raster in the coordinate frame used by geometry and texture exports;
+- residual-offset255.png: uint16 PNG encoding of the signed grayscale or per-channel BGR residual plus 255;
+- reconstructed-analysis.png: pixel-exact recomposition of the decoded analysis raster, including all retained BGR channel values for color sources;
+- identity-reconstruction.json: SHA-256 values, pixel mismatch count, maximum absolute error and the scope/limits of the exact-recomposition guarantee;
+- scene.gltf: self-contained glTF 2.0 geometry and embedded analysis-raster texture, with IDs/provenance/uncertainty/relations in per-node extras;
 - provisional.musicxml: XML output carrying explicit review markers.
 
 Unresolved regions include a heuristic reason such as low local contrast, low local sharpness/blur, or an unfamiliar/uncertain mark. These thresholds are not calibrated; the UI explicitly treats them as diagnostic hints, not probabilities.
 
+### Exact residual reconstruction
+
+The bundle renders the currently modeled primitives into an 8-bit grayscale image \(G\). For a grayscale input, the signed residual is \(R=I-G\) against the decoded grayscale raster \(I\). For a color input, the renderer is lifted into BGR channels and the residual is computed separately for each retained channel. Each residual channel ranges from \(-255\) to \(255\), so the stored PNG uses unsigned 16-bit values \(R_{16}=R+255\). Recomposing \(I'=G+R_{16}-255\) recovers each grayscale sample or each retained BGR channel exactly when the stored files are read back. The pipeline checks this with an array equality assertion and reports the mismatch count and maximum absolute error in \`identity-reconstruction.json\`.
+
+This is a lossless identity anchor for the **decoded analysis raster**: grayscale samples stay grayscale, and BGR channels are preserved for color images. Alpha is composited over white, 16-bit raster inputs are normalized to uint8 for analysis, and PDF pages are decoded or rendered by the configured loader; this guarantee is not byte identity with the compressed source file. The original upload is preserved separately byte-for-byte and hash-checked. The residual is not advertised as compressed; PNG compression only encodes the uint16 residual image losslessly.
+
+
 The preserved source is the lossless identity anchor. The overlay is a diagnostic layer, not a claim that all original ink has been parsed into primitives. The 3D view uses a semantic layer offset; it is not a measurement of the physical relief of ink.
+
+### glTF export semantics
+
+The generated \`scene.gltf\` embeds both its geometry buffer and an analysis-raster PNG texture, so it is one portable file with no separate \`.bin\` or image dependency. The texture is drawn on a page-sized plane behind the symbols; its UV coordinates align with the page geometry. In CLI bundles the texture uses the decoded analysis raster at its native pixel dimensions. The browser export uses the displayed analysis preview resolution, while the original uploaded file remains separately preserved byte-for-byte and verified by SHA-256. X/Y coordinates use the analysis raster's pixel frame; Y is converted to glTF's Y-up convention. Notes and linked stems receive small Z offsets for viewing semantic layers and annotated voices. Those offsets are display conventions, not measurements of physical ink depth. The exporter preserves primitive IDs, symbolic annotations, typed relations, provenance, uncertainty and source/capture hashes in glTF \`extras\`. The current mesh coverage is deliberately limited to staff lines, barlines, noteheads, attached stems and outlined unresolved regions; beams, lyrics, slurs, dynamics, clefs and physical paper/ink optics are not reconstructed yet.
+
+Use **Download current 3D scene (.gltf)** in the browser after editing to export the current geometry over the analysis-raster texture. The CLI bundle also writes \`scene.gltf\` and validates its embedded buffers, texture, vertex attributes and mesh indices before returning success.
+
+For hand-annotated scene JSON, MusicXML export accepts note fields `chord_id`, `voice`, `onset`, `duration`, `type`, `accidental`, and `pitch.alter`. Staffs can share `part_id` and specify `part_name`, `system_index`, `staff_number`, `key_fifths`, `time_signature`, and `clef`; notes can override `system_index` or set `measure_index`. `onset` and `duration` use MusicXML divisions (the current default is one division per quarter note). The exporter serializes supplied annotations, adds review-marked geometric chord hypotheses, and keeps unresolved fields flagged; it does not infer voices or accidentals.
 
 ## Epistemic status
 
@@ -76,10 +153,44 @@ The preserved source is the lossless identity anchor. The overlay is a diagnosti
 - [HYPOTHESIS] The synthetic patch classifier and geometric proposals will transfer to real score photographs. This must be tested on a held-out, real-page benchmark.
 - [NOT YET IMPLEMENTED] End-to-end recovery of complete symbolic-geometric scenes from arbitrary photographs, calibrated symbolic ambiguity, physically measured ink depth and validated DID/MDL metrics.
 
+## Synthetic capture pilot
+
+[MĂSURAT — synthetic only] The checked-in run evaluated 100 procedurally generated pages (1,800 ground-truth noteheads), seeds 20261029–20261128, two staffs per page, 9 notes per staff, grayscale noise σ=2 and Gaussian blur σ=0.35 px. Geometry remained registered; there was no perspective, rotation, color ISP, page curvature or real manuscript. The patch classifier used 360 synthetic training crops and 90 synthetic holdout crops.
+
+[MĂSURAT — synthetic only] After local template-fit refinement, matching at 0.3 staff spaces produced 1,790 true positives, 2 false positives and 10 false negatives: micro precision 0.9989, recall 0.9944 and F1 0.9967. Macro page F1 was 0.9966 (page-bootstrap 95% CI 0.9939–0.9988). Mean page p95 localization error was 0.0778 staff spaces (95% CI 0.0735–0.0820); all 100 pages met the ≤0.3-space localization threshold (Wilson 95% CI 96.3%–100%). The combined gate F1 ≥0.95 and p95 ≤0.3 spaces passed on 96/100 pages (Wilson 95% CI 90.2%–98.4%). The p95 is conditional on matched noteheads; precision/recall separately account for misses and extras. The patch classifier scored 0.9556 on 90 synthetic holdout crops; that is crop classification accuracy, not page-level note detection. See [the full report](results/synthetic-capture-pilot-2026-10-29.json) for per-page data, model hash, versions and hardware.
+
+[MĂSURAT] This is a synthetic-only result, not a real-photo benchmark or the IDSR DID metric. The image pipeline does not infer voices, accidentals, durations or staff-to-part mapping.
+
+[IPOTEZĂ] The synthetic proposal and refinement may transfer to registered score photographs. A falsifying test is a held-out set of real photographs with independently prepared notehead-center annotations and per-page precision, recall, F1 and staff-space localization confidence intervals.
+
+[MĂSURAT] The run used Python 3.9.6, NumPy 1.22.0 and OpenCV 5.0.0. The project requires Python ≥3.11, NumPy ≥1.26 and OpenCV ≥4.9,<5; the JSON records that this environment does not meet those constraints. Treat the result and latency as exploratory until rerun on supported dependencies and confirmed by CI.
+
+## Registered perspective-capture pilot
+
+[MĂSURAT — paired synthetic only] The checked-in run used 100 synthetic source pages with two staffs and 18 noteheads each, seeds 20261029–20261128, grayscale noise σ=2 and blur σ=0.35 px. Each page was warped by a known planar homography. The corrected view was given the exact four generated page corners; this excludes automatic corner-detection error. The JSON stores per-page raster hashes, corners, and both homographies. The run is not a real-camera or real-manuscript test, and its score is not IDSR DID.
+
+[MĂSURAT — paired synthetic only] The source-reference view detected 2 staffs on all 100 pages and scored micro F1 0.9967 (macro page F1 0.9966, page-bootstrap 95% CI 0.9939–0.9986). The uncorrected projective view detected 0 staffs and proposed 0 noteheads on all 100 pages (0/100; Wilson 95% upper bound 3.7%). With exact-corner correction, 2 staffs were detected on all pages; notehead micro F1 was 0.8039, with recall 0.7378 and precision 0.8830. Macro page F1 was 0.7968 (95% CI 0.7710–0.8216). Mean page p95 center error was 0.0993 staff spaces (95% CI 0.0953–0.1034), conditional on matched noteheads; every page met that conditional ≤0.3-space threshold. False negatives and false positives remain separate: 472 missed and 176 extra proposals across 100 pages.
+
+[IPOTEZĂ] The uncorrected failure is caused by the staff detector's near-horizontal morphology assumption: projective line slope prevents its horizontal opening kernel from retaining staff lines. Falsify this with a sweep over known page tilts and keystone levels, 100 seeds per level, and report staff-detection rate before and after correction. The checked-in per-page report records the 0/100 staff detections but does not isolate the causal image-processing operation.
+
+[MĂSURAT] This pilot used Python 3.9.6, NumPy 1.22.0 and OpenCV 5.0.0, outside declared project constraints. The result shows what exact manual corners can recover in this simulator; it gives no evidence about incorrect user taps, a curled page, phone ISP, actual photographs, or symbolic transcription quality.
+
+## Real-page ingestion smoke test
+
+[DEMONSTRAT PRIN CONSTRUCȚIE] A PDF page is read at the embedded image's native resolution only when it contains one axis-aligned raster covering the page, has no text or vector drawings, and its page/image aspect ratios agree within 1%. Other PDFs keep the normal DPI renderer. This avoids magnifying a scan merely because its PDF uses pixel-sized page units. The falsifier is a PDF satisfying those checks whose extracted raster differs in orientation, samples, or content from its intended page image.
+
+[MĂSURAT — unit test] One synthetic grayscale page embedded full-bleed in a PDF was loaded with a requested 300 DPI; the loader returned the original dimensions and byte-identical grayscale samples (N=1 page). The conventional Wilson 95% interval for a one-trial pass is [0.207, 1.000], so this test only verifies the code path, not all PDF encodings. See `test_image_only_pdf_uses_native_page_raster_without_dpi_upsampling`.
+
+[MĂSURAT — smoke, no labels] The local run used three selected scan-PDF pages associated with pair IDs 97 and 106 (`pair-97/page-0`, `pair-106/page-0`, `pair-106/page-1`); the matching vector PDFs were not used for ground truth. All three original PDF files passed byte-hash preservation checks (3/3; Wilson 95% interval [0.439, 1.000]). Staff groups were detected on 2/3 pages, a page-level rate of 0.667 (Wilson 95% CI [0.208, 0.939]); notehead proposals were present on the same 2/3 pages. The per-page notehead proposal counts were 0, 5, and 40, with detected staff counts 0, 1, and 5. This sample was selected for a smoke test, not sampled randomly. Its intervals describe the selected page outcomes under a binomial model and do not estimate performance on a wider population.
+
+[MĂSURAT — runtime only] End-to-end bundle times on Python 3.9.6, NumPy 1.22.0, OpenCV 5.0.0, macOS 27.0.1 arm64 were 0.418, 0.424, and 0.454 seconds; mean 0.432 seconds/page (2,000 page-bootstrap draws, seed 20261029, 95% CI [0.418, 0.454]). The runtime excludes user image selection and upload. The environment is outside the project's declared Python, NumPy, and OpenCV ranges.
+
+[MĂSURAT — limită] These PDFs have no independent notehead-center labels in this run, so precision, recall, pitch accuracy, and DID are uncomputed. The zero-staff result on pair 97 and one-staff result on pair 106 page 0 are visible failures, not successful reconstructions. The report records only hashes and measurements; it does not copy the private pages into the repository. Reproduce with `scoretwin evaluate-photo-smoke --manifest <local-manifest.json> --out <report.json>` using schema `scoretwin-photo-smoke-v1`. See [the saved summary](results/real-photo-smoke-2026-10-29.json).
+
 ## Next gates
 
 1. Keep the synthetic regression benchmark deterministic and report precision/recall rather than only file creation.
-2. Measure notehead precision/recall on registered real photographs.
+2. Add independent annotations for registered real photographs; the current smoke run tests ingestion and exposes failures but cannot score accuracy.
 3. Add stem, beam, accidental and duration hypotheses with explicit user correction.
 4. Train or retain a proposal model only if it beats a simpler baseline on real pages.
 5. Add DID and MDL only after testing metrics against adversarial manipulations and human judgments.
@@ -87,11 +198,11 @@ The preserved source is the lossless identity anchor. The overlay is a diagnosti
 
 ## External annotated-page manifest
 
-To evaluate real photographs, create a JSON file with schema \`scoretwin-annotated-pages-v1\`. Every image entry needs an image path relative to the manifest and a \`notes\` array whose items include \`center: [x, y]\` in the rasterized image coordinate frame and \`staff_index\` numbered from top to bottom. A \`pitch\` object can optionally contain \`step\` and \`octave\`; \`staff_spacing_px\` is strongly recommended. An optional SHA-256 is checked against the original file.
+To evaluate real photographs, create a JSON file with schema `scoretwin-annotated-pages-v1`. Every image entry needs an image path relative to the manifest and a `notes` array whose items include `center: [x, y]` in the rasterized image coordinate frame and `staff_index` numbered from top to bottom. A `pitch` object can optionally contain `step` and `octave`; `staff_spacing_px` is strongly recommended. An optional SHA-256 is checked against the original file.
 
 Example:
 
-\`\`\`json
+```json
 {
   "schema": "scoretwin-annotated-pages-v1",
   "pages": [{
@@ -103,6 +214,6 @@ Example:
     ]
   }]
 }
-\`\`\`
+```
 
 The report includes per-page counts, precision/recall/F1, center error in pixels and staff spaces, pitch accuracy when labelled, and page-bootstrap 95% intervals for detection and normalized geometry error. These intervals describe variation across the supplied pages; they do not repair bias from a small or unrepresentative sample. Do not call this a real-photo benchmark unless the manifest actually references real photos with independently prepared annotations.

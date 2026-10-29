@@ -30,6 +30,34 @@ class StaffSystem:
         return result
 
 
+@dataclass(frozen=True)
+class CaptureRectification:
+    """A rectified analysis view plus reversible source-coordinate transforms."""
+
+    image: np.ndarray
+    source_to_rectified: np.ndarray
+    rectified_to_source: np.ndarray
+    estimated_skew_degrees: float | None
+    applied_correction_degrees: float
+    applied: bool
+    reason: str
+    method: str = "global_rotation"
+
+    def to_dict(self) -> dict:
+        return {
+            "estimated_skew_degrees": self.estimated_skew_degrees,
+            "applied_correction_degrees": self.applied_correction_degrees,
+            "applied": self.applied,
+            "reason": self.reason,
+            "method": self.method,
+            "source_to_rectified": self.source_to_rectified.tolist(),
+            "rectified_to_source": self.rectified_to_source.tolist(),
+            "coordinate_convention": "pixel centers; x increases right, y increases down",
+            "resampling": "opencv_inter_linear",
+            "preserves_source_pixels": False,
+        }
+
+
 def load_grayscale(path: str | Path, page: int = 0, dpi: int = 200) -> np.ndarray:
     """Load the selected raster image or PDF page as an 8-bit grayscale array."""
     file_path = Path(path)
@@ -44,7 +72,11 @@ def load_grayscale(path: str | Path, page: int = 0, dpi: int = 200) -> np.ndarra
         with fitz.open(file_path) as document:
             if page < 0 or page >= len(document):
                 raise ValueError(f"PDF page index {page} is outside 0..{len(document) - 1}.")
-            pix = document[page].get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72), alpha=False)
+            pdf_page = document[page]
+            image = _native_full_page_image(pdf_page, document, fitz)
+            if image is not None:
+                return image
+            pix = pdf_page.get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72), alpha=False)
             encoded = np.frombuffer(pix.tobytes("png"), dtype=np.uint8)
             gray = cv2.imdecode(encoded, cv2.IMREAD_GRAYSCALE)
             if gray is None:
@@ -57,6 +89,180 @@ def load_grayscale(path: str | Path, page: int = 0, dpi: int = 200) -> np.ndarra
         raise ValueError(f"Unsupported or corrupt image file: {file_path}")
     return gray
 
+
+def _native_full_page_image(pdf_page, document, fitz) -> np.ndarray | None:
+    """Use native samples when a PDF page is one axis-aligned full-page raster.
+
+    Rendering an image-only scan PDF at a nominal DPI can magnify it by an
+    arbitrary page-size convention. The raster remains the observed source, so
+    analyzing its native samples avoids artificial upsampling. Mixed/vector
+    pages and rotated or cropped images retain the normal PDF render path.
+    """
+    if pdf_page.rotation != 0 or pdf_page.get_text().strip() or pdf_page.get_drawings():
+        return None
+    images = pdf_page.get_images(full=True)
+    if len(images) != 1:
+        return None
+    xref, _smask, width, height = images[0][:4]
+    page_rect = pdf_page.rect
+    if width < 1 or height < 1 or page_rect.width <= 0 or page_rect.height <= 0:
+        return None
+    page_ratio = float(page_rect.width / page_rect.height)
+    image_ratio = float(width / height)
+    if abs(page_ratio - image_ratio) / max(page_ratio, image_ratio) > 0.01:
+        return None
+
+    placements = pdf_page.get_image_rects(xref, transform=True)
+    if len(placements) != 1:
+        return None
+    rect, matrix = placements[0]
+    tolerance = 0.5
+    if (
+        abs(rect.x0 - page_rect.x0) > tolerance
+        or abs(rect.y0 - page_rect.y0) > tolerance
+        or abs(rect.x1 - page_rect.x1) > tolerance
+        or abs(rect.y1 - page_rect.y1) > tolerance
+        or abs(matrix.b) > 1e-6
+        or abs(matrix.c) > 1e-6
+        or matrix.a <= 0
+        or matrix.d <= 0
+    ):
+        return None
+
+    pix = fitz.Pixmap(document, xref)
+    if pix.colorspace is not None and pix.colorspace.name != "DeviceGray":
+        pix = fitz.Pixmap(fitz.csRGB, pix)
+    samples = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+    if pix.n == 1:
+        return samples[:, :, 0].copy()
+    if pix.n == 2:
+        gray = samples[:, :, 0].astype(np.float32)
+        alpha = samples[:, :, 1].astype(np.float32) / 255.0
+        return np.clip(np.rint(gray * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)
+    if pix.n == 3:
+        return cv2.cvtColor(samples, cv2.COLOR_RGB2GRAY)
+    if pix.n == 4:
+        rgb = samples[:, :, :3].astype(np.float32)
+        alpha = samples[:, :, 3:4].astype(np.float32) / 255.0
+        rgb = np.clip(np.rint(rgb * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    return None
+
+
+
+def _pixels_to_supported_raster(samples: np.ndarray) -> np.ndarray:
+    """Normalize decoded image samples to uint8 gray or BGR with white alpha compositing."""
+    array = np.asarray(samples)
+    if array.dtype == np.uint16:
+        array = ((array.astype(np.uint32) + 128) // 257).clip(0, 255).astype(np.uint8)
+    elif array.dtype != np.uint8:
+        array = np.clip(np.rint(array), 0, 255).astype(np.uint8)
+
+    if array.ndim == 2:
+        return array.copy()
+    if array.ndim != 3:
+        raise ValueError("Decoded image must have two or three dimensions.")
+    channels = int(array.shape[2])
+    if channels == 1:
+        return array[:, :, 0].copy()
+    if channels == 2:
+        gray = array[:, :, 0].astype(np.float32)
+        alpha = array[:, :, 1:2].astype(np.float32) / 255.0
+        return np.clip(np.rint(gray[:, :, None] * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)[:, :, 0]
+    if channels == 3:
+        return array.copy()  # OpenCV decoded color order is BGR.
+    if channels == 4:
+        bgr = array[:, :, :3].astype(np.float32)
+        alpha = array[:, :, 3:4].astype(np.float32) / 255.0
+        return np.clip(np.rint(bgr * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)
+    raise ValueError(f"Unsupported decoded channel count: {channels}.")
+
+
+def _native_full_page_color_pixels(pdf_page, document, fitz) -> np.ndarray | None:
+    """Return native BGR/gray samples for a full-page embedded scan image, if unambiguous."""
+    if pdf_page.rotation != 0 or pdf_page.get_text().strip() or pdf_page.get_drawings():
+        return None
+    images = pdf_page.get_images(full=True)
+    if len(images) != 1:
+        return None
+    xref, _smask, width, height = images[0][:4]
+    page_rect = pdf_page.rect
+    if width < 1 or height < 1 or page_rect.width <= 0 or page_rect.height <= 0:
+        return None
+    page_ratio = float(page_rect.width / page_rect.height)
+    image_ratio = float(width / height)
+    if abs(page_ratio - image_ratio) / max(page_ratio, image_ratio) > 0.01:
+        return None
+    placements = pdf_page.get_image_rects(xref, transform=True)
+    if len(placements) != 1:
+        return None
+    rect, matrix = placements[0]
+    tolerance = 0.5
+    if (
+        abs(rect.x0 - page_rect.x0) > tolerance
+        or abs(rect.y0 - page_rect.y0) > tolerance
+        or abs(rect.x1 - page_rect.x1) > tolerance
+        or abs(rect.y1 - page_rect.y1) > tolerance
+        or abs(matrix.b) > 1e-6
+        or abs(matrix.c) > 1e-6
+        or matrix.a <= 0
+        or matrix.d <= 0
+    ):
+        return None
+    pix = fitz.Pixmap(document, xref)
+    if pix.colorspace is not None and pix.colorspace.name not in {"DeviceGray", "DeviceRGB"}:
+        pix = fitz.Pixmap(fitz.csRGB, pix)
+    samples = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+    if pix.n == 1:
+        return samples[:, :, 0].copy()
+    if pix.n == 2:
+        gray = samples[:, :, 0].astype(np.float32)
+        alpha = samples[:, :, 1:2].astype(np.float32) / 255.0
+        return np.clip(np.rint(gray[:, :, None] * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)[:, :, 0]
+    if pix.n == 3:
+        return cv2.cvtColor(samples, cv2.COLOR_RGB2BGR)
+    if pix.n == 4:
+        rgb = samples[:, :, :3].astype(np.float32)
+        alpha = samples[:, :, 3:4].astype(np.float32) / 255.0
+        rgb = np.clip(np.rint(rgb * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    return None
+
+
+def load_pixel_array(path: str | Path, page: int = 0, dpi: int = 200) -> np.ndarray:
+    """Load decoded source pixels as uint8 gray or BGR for lossless residual accounting.
+
+    Raster files retain their decoded grayscale or BGR channels. Alpha channels are
+    explicitly composited over white. PDF pages use native full-page image samples
+    when possible; other pages are rendered at the requested DPI. The original file
+    bytes must still be preserved separately because decoding is not byte identity.
+    """
+    file_path = Path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(file_path)
+    if file_path.suffix.lower() == ".pdf":
+        try:
+            import fitz
+        except ImportError as exc:
+            raise RuntimeError("PDF support requires PyMuPDF; install the project dependencies.") from exc
+        with fitz.open(file_path) as document:
+            if page < 0 or page >= len(document):
+                raise ValueError(f"PDF page index {page} is outside 0..{len(document) - 1}.")
+            pdf_page = document[page]
+            native = _native_full_page_color_pixels(pdf_page, document, fitz)
+            if native is not None:
+                return native
+            pix = pdf_page.get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72), alpha=False)
+            if pix.n == 1:
+                return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width).copy()
+            rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)[:, :, :3]
+            return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+    encoded = np.frombuffer(file_path.read_bytes(), dtype=np.uint8)
+    decoded = cv2.imdecode(encoded, cv2.IMREAD_UNCHANGED)
+    if decoded is None:
+        raise ValueError(f"Unsupported or corrupt image file: {file_path}")
+    return _pixels_to_supported_raster(decoded)
 
 def binarize(gray: np.ndarray) -> np.ndarray:
     """Return foreground ink as 255, using Otsu thresholding."""
@@ -99,7 +305,9 @@ def estimate_global_skew_degrees(gray: np.ndarray) -> float | None:
 
     observations: list[tuple[float, float]] = []
     min_length = scaled_width * 0.12
-    for line in lines[:, 0, :]:
+    # OpenCV versions return Hough line arrays either as (N, 1, 4) or (N, 4).
+    # Normalize the layout before iterating so both supported Python builds work.
+    for line in np.asarray(lines).reshape(-1, 4):
         x0, y0, x1, y1 = [int(value) for value in line]
         dx, dy = x1 - x0, y1 - y0
         length = float(np.hypot(dx, dy))
@@ -117,6 +325,184 @@ def estimate_global_skew_degrees(gray: np.ndarray) -> float | None:
         if cumulative >= half_length:
             return round(angle, 3)
     return round(observations[-1][0], 3)
+
+
+def transform_points_xy(points: np.ndarray | list, matrix: np.ndarray) -> np.ndarray:
+    """Map Nx2 pixel-center points through a 2x3 affine or 3x3 homography."""
+    coordinates = np.asarray(points, dtype=np.float64)
+    transform = np.asarray(matrix, dtype=np.float64)
+    if coordinates.ndim != 2 or coordinates.shape[1] != 2:
+        raise ValueError("Points must have shape (N, 2).")
+    if transform.shape == (2, 3):
+        transform = np.vstack([transform, [0.0, 0.0, 1.0]])
+    if transform.shape != (3, 3) or not np.all(np.isfinite(transform)):
+        raise ValueError("Transform must be a finite 2x3 affine matrix or 3x3 homography.")
+    homogeneous = np.column_stack([coordinates, np.ones(len(coordinates))])
+    mapped = homogeneous @ transform.T
+    denominator = mapped[:, 2]
+    if np.any(np.abs(denominator) < 1e-12):
+        raise ValueError("Transform maps at least one point to infinity.")
+    return mapped[:, :2] / denominator[:, None]
+
+
+def rectify_global_skew(
+    gray: np.ndarray,
+    max_abs_skew_degrees: float = 12.0,
+    min_abs_skew_degrees: float = 0.15,
+    border_value: int = 255,
+) -> CaptureRectification:
+    """Create an optional deskewed analysis view and retain invertible coordinates.
+
+    Only global near-horizontal rotation is estimated. The source array is never
+    modified, and the returned affine matrices map pixel centers both ways. This
+    does not correct perspective, page curl, lens distortion, or local deformation.
+    """
+    if gray.ndim != 2 or gray.dtype != np.uint8:
+        raise ValueError("rectify_global_skew expects a uint8 grayscale image.")
+    if min(gray.shape) < 2:
+        raise ValueError("Input image must be at least 2x2 pixels.")
+    if not np.isfinite(max_abs_skew_degrees) or max_abs_skew_degrees <= 0.0:
+        raise ValueError("max_abs_skew_degrees must be finite and positive.")
+    if not np.isfinite(min_abs_skew_degrees) or min_abs_skew_degrees < 0.0:
+        raise ValueError("min_abs_skew_degrees must be finite and non-negative.")
+    if min_abs_skew_degrees > max_abs_skew_degrees:
+        raise ValueError("min_abs_skew_degrees cannot exceed max_abs_skew_degrees.")
+    if not 0 <= int(border_value) <= 255:
+        raise ValueError("border_value must be an integer in 0..255.")
+
+    estimated = estimate_global_skew_degrees(gray)
+    identity = np.eye(3, dtype=np.float64)
+    if estimated is None:
+        return CaptureRectification(
+            gray.copy(), identity, identity.copy(), None, 0.0, False,
+            "no_dominant_near_horizontal_lines",
+        )
+    if abs(estimated) > max_abs_skew_degrees:
+        return CaptureRectification(
+            gray.copy(), identity, identity.copy(), estimated, 0.0, False,
+            "estimated_skew_exceeds_rectification_limit",
+        )
+    if abs(estimated) < min_abs_skew_degrees:
+        return CaptureRectification(
+            gray.copy(), identity, identity.copy(), estimated, 0.0, False,
+            "below_minimum_rotation_threshold",
+        )
+
+    height, width = gray.shape
+    affine = cv2.getRotationMatrix2D(((width - 1) / 2.0, (height - 1) / 2.0), estimated, 1.0)
+    corners = np.asarray(
+        [[0.0, 0.0], [width - 1.0, 0.0], [width - 1.0, height - 1.0], [0.0, height - 1.0]],
+        dtype=np.float64,
+    )
+    transformed_corners = transform_points_xy(corners, affine)
+    minimum = transformed_corners.min(axis=0)
+    maximum = transformed_corners.max(axis=0)
+    output_width = max(1, int(np.ceil(maximum[0] - minimum[0] + 1.0)))
+    output_height = max(1, int(np.ceil(maximum[1] - minimum[1] + 1.0)))
+    affine[0, 2] -= minimum[0]
+    affine[1, 2] -= minimum[1]
+    source_to_rectified = np.vstack([affine, [0.0, 0.0, 1.0]])
+    rectified_to_source = np.linalg.inv(source_to_rectified)
+    rectified = cv2.warpAffine(
+        gray,
+        affine,
+        (output_width, output_height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=int(border_value),
+    )
+    return CaptureRectification(
+        rectified,
+        source_to_rectified,
+        rectified_to_source,
+        estimated,
+        estimated,
+        True,
+        "global_rotation_rectified",
+        "global_rotation",
+    )
+
+
+def rectify_page_quadrilateral(
+    gray: np.ndarray,
+    corners_xy: np.ndarray | list,
+    border_value: int = 255,
+    max_output_pixels: int = 80_000_000,
+) -> CaptureRectification:
+    """Perspective-rectify a page from manually supplied TL, TR, BR, BL corners.
+
+    The four source points are measured in source-raster pixel-center coordinates.
+    This estimates a planar homography only: it cannot flatten curl, folds, or
+    non-planar pages. The caller must verify the corners; no page detector is run.
+    """
+    if gray.ndim != 2 or gray.dtype != np.uint8:
+        raise ValueError("rectify_page_quadrilateral expects a uint8 grayscale image.")
+    if min(gray.shape) < 2:
+        raise ValueError("Input image must be at least 2x2 pixels.")
+    if not 0 <= int(border_value) <= 255:
+        raise ValueError("border_value must be an integer in 0..255.")
+    if not isinstance(max_output_pixels, (int, np.integer)) or max_output_pixels < 4:
+        raise ValueError("max_output_pixels must be an integer of at least 4.")
+
+    source = np.asarray(corners_xy, dtype=np.float64)
+    if source.shape != (4, 2) or not np.all(np.isfinite(source)):
+        raise ValueError("corners_xy must contain four finite [x, y] points.")
+    height, width = gray.shape
+    if np.any(source[:, 0] < 0) or np.any(source[:, 0] > width - 1):
+        raise ValueError("All corner x-coordinates must fall inside the source image.")
+    if np.any(source[:, 1] < 0) or np.any(source[:, 1] > height - 1):
+        raise ValueError("All corner y-coordinates must fall inside the source image.")
+
+    # Ordered TL, TR, BR, BL points must form a strictly convex quadrilateral.
+    edges = np.roll(source, -1, axis=0) - source
+    next_edges = np.roll(edges, -1, axis=0)
+    cross_products = edges[:, 0] * next_edges[:, 1] - edges[:, 1] * next_edges[:, 0]
+    if np.any(cross_products <= 1e-6):
+        raise ValueError("Corners must form a clockwise, strictly convex quadrilateral in TL, TR, BR, BL order.")
+    area = 0.5 * abs(float(np.dot(source[:, 0], np.roll(source[:, 1], -1))
+                           - np.dot(source[:, 1], np.roll(source[:, 0], -1))))
+    if area < 4.0:
+        raise ValueError("The selected page quadrilateral is too small to rectify.")
+
+    top = float(np.linalg.norm(source[1] - source[0]))
+    bottom = float(np.linalg.norm(source[2] - source[3]))
+    left = float(np.linalg.norm(source[3] - source[0]))
+    right = float(np.linalg.norm(source[2] - source[1]))
+    output_width = max(2, int(round(max(top, bottom))) + 1)
+    output_height = max(2, int(round(max(left, right))) + 1)
+    if output_width * output_height > max_output_pixels:
+        raise ValueError(
+            f"Rectified output would contain {output_width * output_height} pixels; "
+            f"limit is {max_output_pixels}."
+        )
+
+    destination = np.asarray(
+        [[0.0, 0.0], [output_width - 1.0, 0.0],
+         [output_width - 1.0, output_height - 1.0], [0.0, output_height - 1.0]],
+        dtype=np.float32,
+    )
+    homography = cv2.getPerspectiveTransform(source.astype(np.float32), destination)
+    if not np.all(np.isfinite(homography)) or abs(float(np.linalg.det(homography))) < 1e-12:
+        raise ValueError("The selected corners do not define an invertible homography.")
+    inverse = np.linalg.inv(homography)
+    rectified = cv2.warpPerspective(
+        gray,
+        homography,
+        (output_width, output_height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=int(border_value),
+    )
+    return CaptureRectification(
+        rectified,
+        homography.astype(np.float64),
+        inverse.astype(np.float64),
+        None,
+        0.0,
+        True,
+        "manual_page_quadrilateral_rectified",
+        "manual_page_quadrilateral",
+    )
 
 def _merge_active_rows(active: np.ndarray, counts: np.ndarray, max_gap: int = 2) -> list[int]:
     indices = np.flatnonzero(active)

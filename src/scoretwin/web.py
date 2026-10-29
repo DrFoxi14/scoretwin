@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -12,10 +14,10 @@ import cv2
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 
+from .gltf_export import build_gltf, validate_embedded_gltf
 from .imaging import load_grayscale
-from .pipeline import analyze_array, render_geometry_scene
+from .pipeline import process_file, render_geometry_scene
 from .musicxml import build_musicxml
-from .proposal import get_default_model, load_model
 
 app = FastAPI(title="ScoreTwin / IDSR", version="0.1.0")
 ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".pdf"}
@@ -32,18 +34,35 @@ h1{letter-spacing:-.04em;margin-bottom:5px}.muted{color:#9da8b9}.panel{border:1p
 button{background:#b7f36b;color:#151a12;font-weight:700;border:0;border-radius:9px;padding:11px 16px;cursor:pointer;margin:4px}
 input{margin:12px 0}img{width:100%;height:auto;border-radius:8px;border:1px solid #303949}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#ced7e5}a{color:#b7f36b}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.editor-row{display:flex;gap:12px;align-items:center;justify-content:space-between;border-top:1px solid #303949;padding:10px 0}.editor-row select{background:#10131a;color:#edf0f6;padding:7px;border:1px solid #46536a;border-radius:7px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.editor-row{display:grid;grid-template-columns:minmax(150px,1.5fr) repeat(6,minmax(74px,1fr));gap:7px;align-items:center;border-top:1px solid #303949;padding:10px 0}
+.editor-row span{overflow-wrap:anywhere;color:#d8deea}
+.editor-row select{min-width:0;width:100%;background:#10131a;color:#edf0f6;padding:7px 5px;border:1px solid #46536a;border-radius:7px}
 canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px solid #303949;touch-action:none}
 #pageCanvas{height:auto;display:block;background:#f4f4f4;cursor:crosshair}
+#cornerCanvas{height:auto;display:block;background:#f4f4f4;cursor:crosshair}
+#live-camera{width:100%;max-height:65vh;object-fit:contain;background:#080b10;border-radius:10px;border:1px solid #303949}
+#live-camera-panel{border-bottom:1px solid #303949;padding-bottom:14px;margin-bottom:16px}
 #scene3d{height:380px}.status{padding:10px 0;font-weight:600}
-@media(max-width:700px){.grid{grid-template-columns:1fr}canvas{height:300px}#pageCanvas{height:auto}#scene3d{height:300px}}
+@media(max-width:800px){.grid{grid-template-columns:1fr}.editor-row{grid-template-columns:1fr 1fr}.editor-row span{grid-column:1 / -1}canvas{height:300px}#pageCanvas{height:auto}#scene3d{height:300px}}
 </style>
 </head>
 <body>
 <h1>ScoreTwin <span class="muted">/ IDSR</span></h1>
 <p class="muted">Geometry-first score digitization prototype. The source stays the identity anchor; symbolic proposals remain provisional.</p>
 <div class="panel">
+<section id="live-camera-panel">
+<h2>Live capture with guidance</h2>
+<p class="muted">Use the rear camera, keep all four page corners visible, avoid shadows, and wait for the ink to look sharp. Live hints are heuristic; the detailed check runs after capture.</p>
+<video id="live-camera" autoplay playsinline muted hidden aria-label="Live rear-camera preview of the score"></video>
+<canvas id="live-camera-sampler" width="192" height="144" hidden></canvas>
+<p id="live-quality-status" class="muted" role="status">Camera is off. You can also use the file picker below.</p>
+<button id="start-camera" type="button">Start rear camera</button>
+<button id="capture-frame" type="button" disabled>Capture 3-frame burst (select sharpest)</button>
+<button id="stop-camera" type="button" disabled>Stop camera</button>
+</section>
 <form id="upload"><label for="file">Choose an image or PDF</label><br><input id="file" name="file" type="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf"><br><label for="camera-file">Or take a photo with the phone camera</label><br><input id="camera-file" name="camera-file" type="file" accept="image/*" capture="environment"><br><label for="page">PDF page index (0-based; ignored for images)</label><br><input id="page" name="page" type="number" min="0" max="10000" value="0"><br><button id="submit" type="submit">Analyze page</button></form>
+<div id="corner-panel" hidden><h2>Optional perspective correction</h2><p class="muted">On a photo, tap the page corners in order: top left, top right, bottom right, bottom left. This assumes a flat page.</p><button id="mark-corners" type="button">Select four page corners</button><button id="clear-corners" type="button">Clear corners</button><p id="corner-status" class="muted" aria-live="polite"></p><canvas id="cornerCanvas" aria-label="Preview for selecting page corners"></canvas></div>
 <div id="status" class="status" role="status"></div>
 </div>
 <div id="results" hidden>
@@ -56,6 +75,16 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <img id="geometry-render" alt="Structural render of currently modeled primitives">
 <button id="render-current" type="button">Render current geometry</button>
 </section>
+<section class="panel"><h2>Capture quality and retake guidance</h2>
+<p class="muted">These are heuristic measurements, not calibrated probabilities. A warning is a suggestion to inspect or recapture the page, not a claim that OMR failed.</p>
+<pre id="capture-quality-summary">Waiting for analysis</pre>
+</section>
+<section class="panel"><h2>Lossless residual gate</h2>
+<p class="muted">This proof covers exact recomposition of the decoded grayscale analysis raster, not symbolic correctness or physical ink depth. The original uploaded file remains separately preserved byte-for-byte.</p>
+<pre id="identity-summary">Waiting for analysis</pre>
+<button id="download-residual" type="button" disabled>Download uint16 residual PNG</button>
+<button id="download-identity-report" type="button" disabled>Download identity report JSON</button>
+</section>
 <section class="panel"><h2>3D semantic layer view</h2>
 <p class="muted">Drag to rotate. The layer offset is a visualization convention, not measured physical ink depth.</p>
 <canvas id="scene3d" width="1100" height="400" aria-label="Interactive semantic layer preview"></canvas><br>
@@ -65,19 +94,23 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <section class="panel"><h2>Review and edit pitch proposals</h2>
 <p class="muted">Changing a pitch changes the symbolic proposal only. The original image and its recorded hash do not change. Durations, key signatures, accidentals, voices and part assignment still require review.</p>
 <div id="editor"></div><button id="export-edits" type="button">Regenerate MusicXML from edits</button>
+<button id="export-gltf-edits" type="button">Download current 3D scene (.gltf)</button>
 </section>
 <section class="panel"><h2>Warnings</h2><pre id="warnings"></pre></section>
 </div>
 <script>
-let currentScene=null, originalScene=null, yaw=-0.38, tilt=-0.2, dragging=false, draggingNote=-1, lastX=0, lastY=0;
+let currentScene=null, originalScene=null, backgroundPreviewPngBase64=null, residualPngBase64=null, identityReportJson=null, yaw=-0.38, tilt=-0.2, dragging=false, draggingNote=-1, lastX=0, lastY=0;
+let liveCameraStream=null, liveQualityTimer=null, liveCapturedFile=null, liveCaptureMetadata=null;
+let cornerImage=null, cornerScaleX=1, cornerScaleY=1, cornerPoints=[], selectingCorners=false, cornerObjectUrl=null;
 const canvas=document.getElementById('scene3d'),ctx=canvas.getContext('2d');
 const pageCanvas=document.getElementById('pageCanvas'),pageCtx=pageCanvas.getContext('2d');
+const cornerCanvas=document.getElementById('cornerCanvas'),cornerCtx=cornerCanvas.getContext('2d');
 const sourcePreview=new Image();
 sourcePreview.onload=()=>{pageCanvas.width=sourcePreview.naturalWidth;pageCanvas.height=sourcePreview.naturalHeight;drawPage();};
 function pagePoint(event){
  const rect=pageCanvas.getBoundingClientRect();
- return [(event.clientX-rect.left)/rect.width*currentScene.image.width,
-         (event.clientY-rect.top)/rect.height*currentScene.image.height];
+ return [(event.clientX-rect.left-pageCanvas.clientLeft)/pageCanvas.clientWidth*currentScene.image.width,
+         (event.clientY-rect.top-pageCanvas.clientTop)/pageCanvas.clientHeight*currentScene.image.height];
 }
 function syncPrimitive(note){
  const primitive=(currentScene.primitives||[]).find(item=>item.id===(note.primitive_id||note.id));
@@ -90,8 +123,13 @@ function syncPrimitive(note){
  primitive.geometry.bbox_px=box.slice();
  primitive.symbolic=primitive.symbolic||{};
  primitive.symbolic.pitch_proposal={...note.pitch};
-}
-function updatePitchFromGeometry(note){
+ primitive.symbolic.accidental=note.accidental||null;
+ primitive.symbolic.duration_ticks=note.duration_ticks??null;
+ primitive.symbolic.duration_type=note.type||null;
+ primitive.symbolic.duration_ticks=note.duration_ticks??null;
+ primitive.symbolic.onset_ticks=note.onset_ticks??null;
+ primitive.symbolic.voice=note.voice??null;
+}function updatePitchFromGeometry(note){
  const staff=currentScene.staffs[note.staff_index];if(!staff)return;
  const continuous=(staff.bottom-note.center[1])/(staff.spacing/2);
  const step=Math.round(continuous);
@@ -119,6 +157,41 @@ function drawPage(){
   const x=item.bbox[0]*sx,y=item.bbox[1]*sy,w=item.bbox[2]*sx,h=item.bbox[3]*sy;
   pageCtx.strokeStyle='#e3b35b';pageCtx.lineWidth=1;pageCtx.strokeRect(x,y,w,h);
  });
+}
+function activeFile(){return liveCapturedFile||document.getElementById('camera-file').files[0]||document.getElementById('file').files[0]||null;}
+function drawCornerPage(){
+ if(!cornerImage||!cornerImage.complete)return;
+ cornerCtx.clearRect(0,0,cornerCanvas.width,cornerCanvas.height);
+ cornerCtx.drawImage(cornerImage,0,0,cornerCanvas.width,cornerCanvas.height);
+ if(cornerPoints.length>1){
+  cornerCtx.strokeStyle='#d43853';cornerCtx.lineWidth=Math.max(2,cornerCanvas.width/600);cornerCtx.beginPath();
+  cornerPoints.forEach((point,index)=>{const x=point[0]*cornerScaleX,y=point[1]*cornerScaleY;index===0?cornerCtx.moveTo(x,y):cornerCtx.lineTo(x,y);});
+  if(cornerPoints.length===4)cornerCtx.closePath();cornerCtx.stroke();
+ }
+ cornerPoints.forEach((point,index)=>{
+  const x=point[0]*cornerScaleX,y=point[1]*cornerScaleY;
+  cornerCtx.fillStyle='#d43853';cornerCtx.beginPath();cornerCtx.arc(x,y,Math.max(8,cornerCanvas.width/150),0,Math.PI*2);cornerCtx.fill();
+  cornerCtx.fillStyle='#fff';cornerCtx.font='bold '+Math.max(11,cornerCanvas.width/100)+'px system-ui';
+  cornerCtx.fillText(String(index+1),x+5,y-5);
+ });
+}
+function loadCornerPreview(){
+ const file=activeFile();cornerPoints=[];selectingCorners=false;cornerImage=null;
+ document.getElementById('corner-status').textContent='';
+ if(cornerObjectUrl){URL.revokeObjectURL(cornerObjectUrl);cornerObjectUrl=null;}
+ if(!file||file.name.toLowerCase().endsWith('.pdf')){document.getElementById('corner-panel').hidden=true;return;}
+ cornerObjectUrl=URL.createObjectURL(file);cornerImage=new Image();
+ cornerImage.onload=()=>{
+  const previewScale=Math.min(1,1600/Math.max(cornerImage.naturalWidth,cornerImage.naturalHeight));
+  cornerCanvas.width=Math.max(1,Math.round(cornerImage.naturalWidth*previewScale));
+  cornerCanvas.height=Math.max(1,Math.round(cornerImage.naturalHeight*previewScale));
+  cornerScaleX=cornerCanvas.width/cornerImage.naturalWidth;
+  cornerScaleY=cornerCanvas.height/cornerImage.naturalHeight;
+  document.getElementById('corner-panel').hidden=false;drawCornerPage();
+  URL.revokeObjectURL(cornerObjectUrl);cornerObjectUrl=null;
+ };
+ cornerImage.onerror=()=>{document.getElementById('corner-panel').hidden=true;};
+ cornerImage.src=cornerObjectUrl;
 }
 function rotatePoint(x,y,z){
  const cy=Math.cos(yaw),sy=Math.sin(yaw),cx=Math.cos(tilt),sx=Math.sin(tilt);
@@ -174,47 +247,412 @@ function draw3d(){
  ctx.fillStyle='#9da8b9';ctx.font='12px system-ui';
  ctx.fillText('x/y: observed page coordinates · z: semantic visualization only',16,24);
 }
+function assignExplicitOnset(note,requestedOnset){
+ const staff=currentScene.staffs[note.staff_index];if(!staff)throw new Error('Staff geometry is unavailable.');
+ const spacing=Number(staff.spacing)||12;
+ const barlines=staff.barlines||[];
+ const measureIndex=barlines.filter(x=>Number(note.center[0])>Number(x)).length;
+ const voice=Number(note.voice||1);
+ const related=currentScene.notes.filter(item=>{
+  if(Number(item.staff_index)!==Number(note.staff_index)||Number(item.voice||1)!==voice)return false;
+  return barlines.filter(x=>Number(item.center[0])>Number(x)).length===measureIndex;
+ }).sort((a,b)=>Number(a.center[0])-Number(b.center[0])||Number(a.center[1])-Number(b.center[1]));
+ const groups=[];
+ for(const item of related){
+  const last=groups[groups.length-1];
+  let chordMember=false;
+  if(last&&last.length){
+   const previous=last[last.length-1];
+   const xGap=Math.abs(Number(item.center[0])-Number(previous.center[0]));
+   const yGap=Math.abs(Number(item.center[1])-Number(previous.center[1]));
+   const pitchDiff=item.pitch.step!==previous.pitch.step||Number(item.pitch.octave)!==Number(previous.pitch.octave);
+   chordMember=xGap<=Math.max(2,0.32*spacing)&&yGap>=0.38*spacing&&pitchDiff;
+  }
+  if(chordMember)last.push(item);else groups.push([item]);
+ }
+ const durationTicks=item=>{
+  if(Number.isFinite(Number(item.duration_ticks))&&item.duration_ticks!==null&&item.duration_ticks!==undefined)return Math.max(1,Number(item.duration_ticks));
+  if(Number.isFinite(Number(item.duration))&&item.duration!==null&&item.duration!==undefined)return Math.max(1,Number(item.duration)*16);
+  return 16;
+ };
+ let cursor=0;
+ const planned=[];
+ let targetFound=false;
+ for(const group of groups){
+  let onset=cursor;
+  if(group.includes(note)){
+   targetFound=true;
+   onset=requestedOnset;
+   if(onset<cursor)throw new Error('That onset overlaps an earlier event in this staff/voice. Choose a later tick or edit the earlier duration.');
+  }
+  const duration=Math.max(...group.map(durationTicks));
+  planned.push({group,onset});
+  cursor=onset+duration;
+ }
+ if(!targetFound)throw new Error('Selected note is not present in its staff/voice sequence.');
+ currentScene.timing_units='ticks_16_per_quarter';
+ for(const plan of planned){
+  for(const item of plan.group){
+   item.onset_ticks=plan.onset;
+   item.onset=plan.onset;
+   item.manually_edited_onset=true;
+   syncPrimitive(item);
+  }
+ }
+}
 function buildEditor(){
  const holder=document.getElementById('editor');holder.replaceChildren();
  if(!currentScene||!currentScene.notes.length){holder.textContent='No notehead proposals are ready for pitch editing.';return;}
  const letters=['C','D','E','F','G','A','B'];
+ const accidentalOptions=[
+  {value:'none',label:'No accidental'},
+  {value:'natural',label:'Natural'},
+  {value:'sharp',label:'Sharp'},
+  {value:'flat',label:'Flat'},
+  {value:'double-sharp',label:'Double sharp'},
+  {value:'flat-flat',label:'Double flat'},
+  {value:'quarter-sharp',label:'Quarter sharp'},
+  {value:'quarter-flat',label:'Quarter flat'},
+  {value:'three-quarters-sharp',label:'3/4 sharp'},
+  {value:'three-quarters-flat',label:'3/4 flat'}
+ ];
+ const accidentalAlter={'natural':0,'sharp':1,'flat':-1,'double-sharp':2,'flat-flat':-2,'quarter-sharp':0.5,'quarter-flat':-0.5,'three-quarters-sharp':1.5,'three-quarters-flat':-1.5};
+ const durationOptions=[
+  {value:'whole',label:'Whole'},
+  {value:'half',label:'Half'},
+  {value:'quarter',label:'Quarter'},
+  {value:'eighth',label:'Eighth'},
+  {value:'16th',label:'16th'},
+  {value:'32nd',label:'32nd'},
+  {value:'64th',label:'64th'}
+ ];
+ const durationTicks={'whole':64,'half':32,'quarter':16,'eighth':8,'16th':4,'32nd':2,'64th':1};
+ const makeSelect=(label,options,value,onChange)=>{
+  const select=document.createElement('select');select.setAttribute('aria-label',label);select.title=label;
+  options.forEach(item=>{
+   const option=document.createElement('option');option.value=item.value;option.textContent=item.label;
+   if(item.value===value)option.selected=true;
+   select.appendChild(option);
+  });
+  select.addEventListener('change',()=>onChange(select.value));
+  return select;
+ };
  currentScene.notes.forEach((note,index)=>{
   const row=document.createElement('div');row.className='editor-row';
   const hint=(note.duration_hypothesis&&note.duration_hypothesis.candidate)||'duration unresolved';
-  const title=document.createElement('span');title.textContent='Proposal '+(index+1)+' · '+note.id+' · '+Math.round(note.center[0])+','+Math.round(note.center[1])+' · '+hint;
-  const select=document.createElement('select');select.setAttribute('aria-label','Pitch for '+note.id);
-  for(let octave=2;octave<=7;octave++)letters.forEach(letter=>{
-   const option=document.createElement('option');option.value=letter+octave;option.textContent=letter+octave;
-   if(letter===note.pitch.step&&octave===Number(note.pitch.octave))option.selected=true;
-   select.appendChild(option);
+  const title=document.createElement('span');
+  title.textContent='Note '+(index+1)+' · '+note.id+' · '+Math.round(note.center[0])+','+Math.round(note.center[1])+' · '+hint;
+  const pitchSelect=makeSelect(
+   'Pitch for '+note.id,
+   Array.from({length:42},(_,position)=>{
+    const letter=letters[position%7],octave=2+Math.floor(position/7);
+    return {value:letter+octave,label:letter+octave};
+   }),
+   note.pitch.step+Number(note.pitch.octave),
+   value=>{
+    const match=value.match(/^([A-G])([2-7])$/);if(!match)return;
+    note.pitch={...note.pitch,step:match[1],octave:Number(match[2])};
+    note.manually_edited_pitch=true;
+    syncPrimitive(note);draw3d();drawPage();
+    document.getElementById('status').textContent='Pitch proposal updated. Check key signature and source accidental before export.';
+   }
+  );
+  const currentAccidental=note.accidental||note.pitch.accidental||'none';
+  const accidentalSelect=makeSelect(
+   'Accidental for '+note.id,
+   accidentalOptions,
+   currentAccidental,
+   value=>{
+    if(value==='none'){
+     delete note.accidental;
+     delete note.pitch.accidental;
+     delete note.pitch.alter;
+    }else{
+     note.accidental=value;
+     note.pitch.accidental=value;
+     note.pitch.alter=accidentalAlter[value];
+    }
+    note.manually_edited_accidental=true;
+    note.uncertainty=(note.uncertainty||[]).filter(item=>item!=='accidental');
+    syncPrimitive(note);draw3d();drawPage();
+    document.getElementById('status').textContent='Accidental updated as an explicit symbolic annotation. Confirm key-signature context before export.';
+   }
+  );
+  const currentDuration=durationTicks[note.type]?note.type:'quarter';
+  const durationSelect=makeSelect(
+   'Duration for '+note.id,
+   durationOptions,
+   currentDuration,
+   value=>{
+    currentScene.timing_units='ticks_16_per_quarter';
+    note.duration_ticks=durationTicks[value];
+    note.duration=durationTicks[value];
+    note.type=value;
+    note.manually_edited_duration=true;
+    note.uncertainty=(note.uncertainty||[]).filter(item=>item!=='duration');
+    syncPrimitive(note);draw3d();drawPage();
+    document.getElementById('status').textContent='Duration updated: '+value+'. Rhythm remains a user annotation; review measure total and voice timing.';
+   }
+  );
+  const voiceOptions=[1,2,3,4].map(value=>({value:String(value),label:'Voice '+value}));
+  const voiceSelect=makeSelect(
+   'Voice for '+note.id,
+   voiceOptions,
+   String(note.voice||1),
+   value=>{
+    note.voice=Number(value);
+    note.manually_edited_voice=true;
+    note.uncertainty=(note.uncertainty||[]).filter(item=>item!=='voice');
+    syncPrimitive(note);draw3d();drawPage();
+    document.getElementById('status').textContent='Voice '+value+' selected. Review overlaps and timing in the exported score.';
+   }
+  );
+  const onsetInput=document.createElement('input');
+  onsetInput.type='number';onsetInput.min='0';onsetInput.max='4096';onsetInput.step='1';
+  onsetInput.placeholder='Auto onset';onsetInput.title='Onset in ticks (16 ticks per quarter)';
+  onsetInput.setAttribute('aria-label','Onset ticks for '+note.id);
+  onsetInput.value=note.onset_ticks===undefined||note.onset_ticks===null?'':String(note.onset_ticks);
+  onsetInput.addEventListener('change',()=>{
+   const requested=Number(onsetInput.value);
+   if(onsetInput.value.trim()===''||!Number.isFinite(requested)||!Number.isInteger(requested)||requested<0||requested>4096){
+    onsetInput.value=note.onset_ticks===undefined||note.onset_ticks===null?'':String(note.onset_ticks);
+    document.getElementById('status').textContent='Onset must be a whole number of ticks between 0 and 4096.';
+    return;
+   }
+   try{
+    assignExplicitOnset(note,requested);
+    draw3d();drawPage();buildEditor();
+    document.getElementById('status').textContent='Explicit onset saved. All events in this measure/voice now carry onset ticks; review overlaps and measure totals.';
+   }catch(error){
+    onsetInput.value=note.onset_ticks===undefined||note.onset_ticks===null?'':String(note.onset_ticks);
+    document.getElementById('status').textContent=error.message||String(error);
+   }
   });
-  select.addEventListener('change',()=>{
-   const match=select.value.match(/^([A-G])([2-7])$/);if(!match)return;
-   currentScene.notes[index].pitch={step:match[1],octave:Number(match[2])};
-   currentScene.notes[index].uncertainty=currentScene.notes[index].uncertainty||[];
-   currentScene.notes[index].manually_edited_pitch=true;
-   syncPrimitive(currentScene.notes[index]);
-   draw3d();drawPage();
+  const removeButton=document.createElement('button');
+  removeButton.type='button';removeButton.textContent='Remove';
+  removeButton.title='Remove this note proposal from the editable scene; source pixels remain unchanged.';
+  removeButton.addEventListener('click',()=>{
+   if(!window.confirm('Remove this note proposal from the editable scene? The source image is not changed and Reset edits can restore the original proposals.'))return;
+   const noteId=String(note.id),stemIds=new Set(note.stem_ids||[]);
+   currentScene.notes=currentScene.notes.filter(item=>String(item.id)!==noteId);
+   currentScene.relations=(currentScene.relations||[]).filter(relation=>String(relation.source)!==noteId&&String(relation.target)!==noteId);
+   currentScene.primitives=(currentScene.primitives||[]).filter(primitive=>String(primitive.id)!==noteId);
+   for(const stemId of stemIds){
+    const stillUsed=currentScene.relations.some(relation=>relation.type==='stem_of'&&String(relation.source)===String(stemId));
+    if(!stillUsed)currentScene.primitives=currentScene.primitives.filter(primitive=>String(primitive.id)!==String(stemId));
+   }
+   currentScene.note_count=currentScene.notes.length;
+   currentScene.user_edit_history=currentScene.user_edit_history||[];
+   currentScene.user_edit_history.push({operation:'remove_note_proposal',note_id:noteId,source_pixels_changed:false});
+   buildEditor();drawPage();draw3d();
+   document.getElementById('status').textContent='Note proposal removed from the editable scene. The source image and its hash are unchanged.';
   });
-  row.append(title,select);holder.appendChild(row);
+  row.append(title,pitchSelect,accidentalSelect,durationSelect,voiceSelect,onsetInput,removeButton);
+  holder.appendChild(row);
  });
+}const form=document.getElementById('upload');
+const liveVideo=document.getElementById('live-camera');
+const liveSampler=document.getElementById('live-camera-sampler');
+const liveSamplerCtx=liveSampler.getContext('2d',{willReadFrequently:true});
+function stopLiveCamera(){
+ if(liveQualityTimer!==null){clearInterval(liveQualityTimer);liveQualityTimer=null;}
+ if(liveCameraStream){liveCameraStream.getTracks().forEach(track=>track.stop());liveCameraStream=null;}
+ liveVideo.srcObject=null;liveVideo.hidden=true;
+ document.getElementById('start-camera').disabled=false;
+ document.getElementById('capture-frame').disabled=true;
+ document.getElementById('stop-camera').disabled=true;
 }
-const form=document.getElementById('upload');
+function updateLiveQuality(){
+ if(!liveCameraStream||liveVideo.readyState<2||!liveVideo.videoWidth)return;
+ try{
+  liveSamplerCtx.drawImage(liveVideo,0,0,liveSampler.width,liveSampler.height);
+  const pixels=liveSamplerCtx.getImageData(0,0,liveSampler.width,liveSampler.height).data;
+  let sum=0,sumSq=0,minGray=255,maxGray=0,edgeSum=0,edgeCount=0;
+  const gray=new Float32Array(liveSampler.width*liveSampler.height);
+  for(let i=0,p=0;i<pixels.length;i+=4,p++){
+   const value=0.2126*pixels[i]+0.7152*pixels[i+1]+0.0722*pixels[i+2];
+   gray[p]=value;sum+=value;sumSq+=value*value;minGray=Math.min(minGray,value);maxGray=Math.max(maxGray,value);
+  }
+  for(let y=1;y<liveSampler.height-1;y++)for(let x=1;x<liveSampler.width-1;x++){
+   const p=y*liveSampler.width+x;
+   edgeSum+=Math.abs(gray[p]-gray[p-1])+Math.abs(gray[p]-gray[p-liveSampler.width]);
+   edgeCount+=2;
+  }
+  const count=gray.length,mean=sum/count,contrast=Math.sqrt(Math.max(0,sumSq/count-mean*mean)),edgeEnergy=edgeSum/Math.max(1,edgeCount);
+  const hints=[];
+  if(maxGray-minGray<20||contrast<12)hints.push('Low scene contrast: make sure the score is visible in the frame.');
+  if(mean<50)hints.push('Frame is very dark: add light without moving the phone.');
+  if(edgeEnergy<0.7)hints.push('Fine edges look weak: steady the phone and let focus settle.');
+  if(mean>253&&contrast<4)hints.push('Frame looks nearly blank or overexposed: check framing and exposure.');
+  document.getElementById('live-quality-status').textContent=[
+   'Live frame: '+liveVideo.videoWidth+'×'+liveVideo.videoHeight,
+   'Sampled contrast: '+contrast.toFixed(1)+' gray levels; edge energy: '+edgeEnergy.toFixed(2),
+   ...(hints.length?hints:['No live retake hint from this small preview sample. Full quality diagnostics follow analysis.']),
+   'These live thresholds are uncalibrated and never block capture.'
+  ].join(' · ');
+ }catch(error){
+  document.getElementById('live-quality-status').textContent='Live quality sample unavailable; you can still capture and use the post-capture diagnostics.';
+ }
+}
+document.getElementById('start-camera').addEventListener('click',async()=>{
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+  document.getElementById('live-quality-status').textContent='Live camera is unavailable in this browser/context. Use the camera file picker or image upload.';
+  return;
+ }
+ try{
+  stopLiveCamera();
+  liveCameraStream=await navigator.mediaDevices.getUserMedia({
+   audio:false,
+   video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}
+  });
+  liveVideo.srcObject=liveCameraStream;liveVideo.hidden=false;
+  await liveVideo.play();
+  document.getElementById('start-camera').disabled=true;
+  document.getElementById('capture-frame').disabled=false;
+  document.getElementById('stop-camera').disabled=false;
+  document.getElementById('live-quality-status').textContent='Rear camera active. Keep the page flat, whole and in focus.';
+  updateLiveQuality();
+  liveQualityTimer=setInterval(updateLiveQuality,900);
+ }catch(error){
+  stopLiveCamera();
+  document.getElementById('live-quality-status').textContent='Could not start the camera: '+(error.message||String(error))+' · Use the camera file picker instead.';
+ }
+});
+document.getElementById('stop-camera').addEventListener('click',()=>{
+ stopLiveCamera();
+ document.getElementById('live-quality-status').textContent='Camera stopped. The last captured frame, if any, remains selected for analysis.';
+});
+function scoreCapturedCanvas(sourceCanvas){
+ const thumb=document.createElement('canvas');thumb.width=192;thumb.height=144;
+ const thumbCtx=thumb.getContext('2d',{willReadFrequently:true});
+ thumbCtx.drawImage(sourceCanvas,0,0,thumb.width,thumb.height);
+ const pixels=thumbCtx.getImageData(0,0,thumb.width,thumb.height).data;
+ const gray=new Float32Array(thumb.width*thumb.height);
+ let sum=0,sumSq=0;
+ for(let i=0,p=0;i<pixels.length;i+=4,p++){
+  const value=0.2126*pixels[i]+0.7152*pixels[i+1]+0.0722*pixels[i+2];
+  gray[p]=value;sum+=value;sumSq+=value*value;
+ }
+ const count=gray.length,mean=sum/count,contrast=Math.sqrt(Math.max(0,sumSq/count-mean*mean));
+ let edgeSum=0,edgeCount=0;
+ for(let y=1;y<thumb.height-1;y++)for(let x=1;x<thumb.width-1;x++){
+  const p=y*thumb.width+x;
+  edgeSum+=Math.abs(gray[p]-gray[p-1])+Math.abs(gray[p]-gray[p-thumb.width]);edgeCount+=2;
+ }
+ const edgeEnergy=edgeSum/Math.max(1,edgeCount);
+ return {contrast:contrast,edge_energy:edgeEnergy,selection_score:edgeEnergy*Math.min(1,contrast/28)};
+}
+document.getElementById('capture-frame').addEventListener('click',async()=>{
+ if(!liveCameraStream||!liveVideo.videoWidth)return;
+ const button=document.getElementById('capture-frame');
+ button.disabled=true;
+ const scale=Math.min(1,2400/Math.max(liveVideo.videoWidth,liveVideo.videoHeight));
+ const frames=[];
+ try{
+  for(let index=0;index<3;index++){
+   if(!liveCameraStream||!liveVideo.videoWidth)break;
+   const output=document.createElement('canvas');
+   output.width=Math.max(1,Math.round(liveVideo.videoWidth*scale));
+   output.height=Math.max(1,Math.round(liveVideo.videoHeight*scale));
+   const outputCtx=output.getContext('2d');
+   outputCtx.drawImage(liveVideo,0,0,output.width,output.height);
+   const blob=await new Promise(resolve=>output.toBlob(resolve,'image/jpeg',0.95));
+   if(blob)frames.push({blob,score:scoreCapturedCanvas(output),width:output.width,height:output.height});
+   document.getElementById('live-quality-status').textContent='Burst capture: '+frames.length+' of 3 frames collected.';
+   if(index<2)await new Promise(resolve=>setTimeout(resolve,180));
+  }
+  if(!frames.length)throw new Error('No camera frame could be encoded.');
+  frames.sort((a,b)=>b.score.selection_score-a.score.selection_score);
+  const selected=frames[0];
+  liveCapturedFile=new File([selected.blob],'scoretwin-live-burst-best.jpg',{type:'image/jpeg',lastModified:Date.now()});
+  liveCaptureMetadata={
+   method:'live_camera_burst_best_single_frame',
+   frames_requested:3,
+   frames_encoded:frames.length,
+   selection_metric:'edge_energy_times_contrast_saturation_on_192x144_preview',
+   selection_metric_calibrated:false,
+   frame_scores:frames.map((frame,index)=>({rank:index+1,contrast:frame.score.contrast,edge_energy:frame.score.edge_energy,selection_score:frame.score.selection_score,width_px:frame.width,height_px:frame.height})),
+   selected_width_px:selected.width,
+   selected_height_px:selected.height,
+   fusion_performed:false
+  };
+  cornerPoints=[];selectingCorners=false;loadCornerPreview();
+  document.getElementById('live-quality-status').textContent='Selected the sharpest-scoring frame from '+frames.length+' captured frame(s): '+selected.width+'×'+selected.height+', score '+selected.score.selection_score.toFixed(3)+'. This is single-frame selection, not super-resolution.';
+  document.getElementById('status').textContent='Best burst frame selected. The chosen browser-created JPEG becomes the uploaded source; the other frames are not merged.';
+ }catch(error){
+  document.getElementById('live-quality-status').textContent='Burst failed: '+(error.message||String(error))+' · You can retry or use the camera file picker.';
+ }finally{
+  button.disabled=!liveCameraStream;
+ }
+});
+document.getElementById('file').addEventListener('change',()=>{
+ liveCapturedFile=null;liveCaptureMetadata=null;loadCornerPreview();
+});
+document.getElementById('camera-file').addEventListener('change',()=>{
+ liveCapturedFile=null;liveCaptureMetadata=null;loadCornerPreview();
+});
+window.addEventListener('pagehide',stopLiveCamera);
+document.getElementById('mark-corners').addEventListener('click',()=>{
+ cornerPoints=[];selectingCorners=true;drawCornerPage();
+ document.getElementById('corner-status').textContent='Tap four corners clockwise, starting at the top left.';
+});
+document.getElementById('clear-corners').addEventListener('click',()=>{
+ cornerPoints=[];selectingCorners=false;drawCornerPage();
+ document.getElementById('corner-status').textContent='Perspective correction cleared.';
+});
+cornerCanvas.addEventListener('pointerdown',event=>{
+ if(!selectingCorners||!cornerImage)return;
+ const rect=cornerCanvas.getBoundingClientRect();
+ const x=(event.clientX-rect.left-cornerCanvas.clientLeft)/cornerCanvas.clientWidth*cornerCanvas.width/cornerScaleX;
+ const y=(event.clientY-rect.top-cornerCanvas.clientTop)/cornerCanvas.clientHeight*cornerCanvas.height/cornerScaleY;
+ cornerPoints.push([Math.max(0,Math.min(cornerImage.naturalWidth-1,x)),Math.max(0,Math.min(cornerImage.naturalHeight-1,y))]);
+ drawCornerPage();
+ if(cornerPoints.length===4){selectingCorners=false;document.getElementById('corner-status').textContent='Four corners selected. Analyze page will rectify this planar region.';}
+ else document.getElementById('corner-status').textContent='Corner '+cornerPoints.length+' of 4 selected.';
+});
 form.addEventListener('submit',async(event)=>{
- event.preventDefault();const file=document.getElementById('camera-file').files[0]||document.getElementById('file').files[0];if(!file){document.getElementById('status').textContent='Choose a file or take a photo first.';return;}
+ event.preventDefault();const file=activeFile();if(!file){document.getElementById('status').textContent='Capture a frame or choose a file first.';return;}
  const button=document.getElementById('submit');button.disabled=true;const status=document.getElementById('status');status.textContent='Processing locally…';
  try{
   const body=new FormData();body.append('file',file);body.append('page',document.getElementById('page').value||'0');
+  if(liveCaptureMetadata&&file===liveCapturedFile)body.append('capture_metadata_json',JSON.stringify(liveCaptureMetadata));
+  if(selectingCorners){status.textContent='Select all four page corners or clear the selection first.';button.disabled=false;return;}
+  if(cornerPoints.length===4)body.append('corners_json',JSON.stringify(cornerPoints));
   const response=await fetch('/api/analyze',{method:'POST',body});const result=await response.json();
   if(!response.ok)throw new Error(result.detail||'Analysis failed');
   currentScene=result.scene;
   currentScene.source=result.source;
   originalScene=JSON.parse(JSON.stringify(currentScene));
+  backgroundPreviewPngBase64=result.source_preview_png_base64;
+  residualPngBase64=result.residual_png_base64||null;
+  identityReportJson=result.identity_report_json||JSON.stringify(result.identity_reconstruction||{},null,2);
   sourcePreview.src='data:image/png;base64,'+result.source_preview_png_base64;
   document.getElementById('summary').textContent=JSON.stringify(result.summary,null,2);
   const unresolved=(currentScene.unknown_objects||[]).map(item=>item.id+': '+item.reason);
   document.getElementById('warnings').textContent=[...result.warnings,...unresolved].join('\n');
   document.getElementById('geometry-render').src='data:image/png;base64,'+result.geometry_render_png_base64;
+  const quality=(currentScene.capture_quality||{});
+  const qualityMetrics=quality.metrics||{};
+  const qualityAdvisories=quality.advisories||[];
+  document.getElementById('capture-quality-summary').textContent=[
+   'Status: '+(quality.status||'not reported'),
+   'Dynamic range p95-p05: '+(qualityMetrics.p95_minus_p05_dynamic_range??'not reported'),
+   'Normalized sharpness heuristic: '+(qualityMetrics.normalized_laplacian_variance??'not reported'),
+   'Background illumination spread: '+(qualityMetrics.background_grid_p90_minus_p10??'not reported'),
+   'Thresholds calibrated: '+(quality.thresholds_calibrated===true?'yes':'no'),
+   ...(qualityAdvisories.length?qualityAdvisories.map(item=>item.code+': '+item.action):['No heuristic retake advice; this does not establish correct symbol recognition.'])
+  ].join('\\n');
+  const proof=result.identity_reconstruction||{};
+  document.getElementById('identity-summary').textContent=[
+   'Exact pixel recomposition: '+(proof.exact_pixel_reconstruction_verified?'PASS':'FAIL'),
+   'Mismatched pixels: '+(proof.mismatched_pixel_count??'not reported'),
+   'Maximum absolute pixel error: '+(proof.maximum_absolute_pixel_error??'not reported'),
+   'Raster pixels: '+(proof.pixel_count??'not reported'),
+   'Residual PNG: '+(result.residual_download_available?'available for direct download':'kept in the full local bundle; too large for browser inline delivery'),
+   'Scope: '+(proof.applies_to||'decoded analysis raster only')
+  ].join('\\n');
+  document.getElementById('download-residual').disabled=!residualPngBase64;
+  document.getElementById('download-identity-report').disabled=!identityReportJson;
   setDownload(result.musicxml);document.getElementById('results').hidden=false;
   buildEditor();draw3d();
   status.textContent='Analysis finished. Review every pitch and all warnings before using the MusicXML.';
@@ -242,6 +680,20 @@ document.getElementById('render-current').addEventListener('click',async()=>{
  }catch(error){document.getElementById('status').textContent=error.message||String(error);}
  finally{button.disabled=false;}
 });
+document.getElementById('download-residual').addEventListener('click',()=>{
+ if(!residualPngBase64)return;
+ const binary=atob(residualPngBase64),bytes=new Uint8Array(binary.length);
+ for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+ const blob=new Blob([bytes],{type:'image/png'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');
+ anchor.href=url;anchor.download='residual-offset255.png';anchor.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+document.getElementById('download-identity-report').addEventListener('click',()=>{
+ if(!identityReportJson)return;
+ const blob=new Blob([identityReportJson],{type:'application/json'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');
+ anchor.href=url;anchor.download='identity-reconstruction.json';anchor.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
 document.getElementById('export-scene').addEventListener('click',()=>{
  if(!currentScene)return;
  const blob=new Blob([JSON.stringify(currentScene,null,2)],{type:'application/json'});
@@ -254,6 +706,20 @@ document.getElementById('reset-edits').addEventListener('click',()=>{
  currentScene=JSON.parse(JSON.stringify(originalScene));
  buildEditor();draw3d();drawPage();
  document.getElementById('status').textContent='Edits reset to the initial proposals. The source file was never modified.';
+});
+document.getElementById('export-gltf-edits').addEventListener('click',async()=>{
+ if(!currentScene)return;
+ const button=document.getElementById('export-gltf-edits');button.disabled=true;
+ try{
+  const response=await fetch('/api/export-gltf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scene:currentScene,background_png_base64:backgroundPreviewPngBase64})});
+  const result=await response.json();if(!response.ok)throw new Error(result.detail||'glTF export failed');
+  const blob=new Blob([result.gltf],{type:'model/gltf+json'});
+  const url=URL.createObjectURL(blob),anchor=document.createElement('a');
+  anchor.href=url;anchor.download='scoretwin-scene.gltf';anchor.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  document.getElementById('status').textContent='Self-contained glTF exported with the analysis-raster texture. Z offsets are semantic layers, not physical ink depth.';
+ }catch(error){document.getElementById('status').textContent=error.message||String(error);}
+ finally{button.disabled=false;}
 });
 document.getElementById('export-edits').addEventListener('click',async()=>{
  if(!currentScene)return;
@@ -297,7 +763,12 @@ def home() -> str:
 
 
 @app.post("/api/analyze")
-async def analyze(file: UploadFile = File(...), page: int = Form(0)) -> dict:
+async def analyze(
+    file: UploadFile = File(...),
+    page: int = Form(0),
+    corners_json: str | None = Form(None),
+    capture_metadata_json: str | None = Form(None),
+) -> dict:
     filename = Path(file.filename or "upload.bin").name
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
@@ -308,36 +779,114 @@ async def analyze(file: UploadFile = File(...), page: int = Form(0)) -> dict:
     if len(contents) > 40 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File size limit is 40 MiB.")
     try:
+        corners = json.loads(corners_json) if corners_json else None
+        if corners is not None and not isinstance(corners, list):
+            raise ValueError("corners_json must be a JSON array of four [x, y] points.")
+        browser_capture = None
+        if capture_metadata_json:
+            if len(capture_metadata_json) > 16000:
+                raise ValueError("capture_metadata_json exceeds the 16 KB limit.")
+            parsed_capture = json.loads(capture_metadata_json)
+            if not isinstance(parsed_capture, dict):
+                raise ValueError("capture_metadata_json must encode a JSON object.")
+            method = parsed_capture.get("method")
+            if method != "live_camera_burst_best_single_frame":
+                raise ValueError("Unknown browser capture method.")
+            frames_requested = parsed_capture.get("frames_requested")
+            frames_encoded = parsed_capture.get("frames_encoded")
+            if (
+                isinstance(frames_requested, bool) or not isinstance(frames_requested, int)
+                or not 1 <= frames_requested <= 10
+            ):
+                raise ValueError("frames_requested must be an integer from 1 to 10.")
+            if (
+                isinstance(frames_encoded, bool) or not isinstance(frames_encoded, int)
+                or not 1 <= frames_encoded <= frames_requested
+            ):
+                raise ValueError("frames_encoded must be between 1 and frames_requested.")
+            raw_scores = parsed_capture.get("frame_scores")
+            if not isinstance(raw_scores, list) or len(raw_scores) != frames_encoded:
+                raise ValueError("frame_scores must contain one score record for each encoded frame.")
+            safe_scores = []
+            for index, item in enumerate(raw_scores):
+                if not isinstance(item, dict):
+                    raise ValueError(f"frame_scores[{index}] must be an object.")
+                row = {}
+                for key in ("rank", "width_px", "height_px"):
+                    value = item.get(key)
+                    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                        raise ValueError(f"frame_scores[{index}].{key} must be a positive integer.")
+                    row[key] = int(value)
+                for key in ("contrast", "edge_energy", "selection_score"):
+                    value = item.get(key)
+                    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                        raise ValueError(f"frame_scores[{index}].{key} must be finite.")
+                    row[key] = float(value)
+                safe_scores.append(row)
+            selected_width = parsed_capture.get("selected_width_px")
+            selected_height = parsed_capture.get("selected_height_px")
+            if (
+                isinstance(selected_width, bool) or not isinstance(selected_width, int) or selected_width < 1
+                or isinstance(selected_height, bool) or not isinstance(selected_height, int) or selected_height < 1
+            ):
+                raise ValueError("Selected frame width and height must be positive integers.")
+            browser_capture = {
+                "method": method,
+                "frames_requested": frames_requested,
+                "frames_encoded": frames_encoded,
+                "selection_metric": "edge_energy_times_contrast_saturation_on_192x144_preview",
+                "selection_metric_calibrated": False,
+                "frame_scores": safe_scores,
+                "selected_width_px": int(selected_width),
+                "selected_height_px": int(selected_height),
+                "fusion_performed": False,
+                "provenance": "client-reported capture metadata; measurement is not independently verified by the server",
+            }
         with tempfile.TemporaryDirectory(prefix="scoretwin-") as directory:
             input_path = Path(directory) / ("source" + suffix)
             input_path.write_bytes(contents)
             gray = load_grayscale(input_path, page=page)
-            model = load_model(MODEL_PATH) if MODEL_PATH and Path(MODEL_PATH).exists() else get_default_model()
-            scene = analyze_array(gray, model=model)
-            if MODEL_PATH and Path(MODEL_PATH).exists():
-                scene["reproducibility"]["proposal_model"]["checkpoint_path"] = MODEL_PATH
-                scene["reproducibility"]["proposal_model"]["checkpoint_sha256"] = hashlib.sha256(Path(MODEL_PATH).read_bytes()).hexdigest()
-            source_sha256 = hashlib.sha256(contents).hexdigest()
+            bundle_dir = Path(directory) / "bundle"
+            model_path = Path(MODEL_PATH) if MODEL_PATH and Path(MODEL_PATH).exists() else None
+            analysis_result = process_file(
+                input_path,
+                bundle_dir,
+                page=page,
+                model_path=model_path,
+                rectify_corners=corners,
+            )
+            scene = analysis_result["scene"]
+            source_sha256 = analysis_result["source_sha256"]
             scene["source"] = {
+                **scene["source"],
                 "filename": filename,
-                "sha256": source_sha256,
-                "bytes": len(contents),
-                "page_index": page if suffix == ".pdf" else None,
                 "server_persisted": False,
+                **({"browser_capture": browser_capture} if browser_capture is not None else {}),
             }
-            preview = gray
-            preview_scale = min(1.0, 1600.0 / max(gray.shape[1], gray.shape[0]))
+            analysis_pixels_path = analysis_result["analysis_pixels_path"]
+            analysis_pixels = cv2.imread(str(analysis_pixels_path), cv2.IMREAD_UNCHANGED)
+            if analysis_pixels is None:
+                raise RuntimeError("Could not read the channel-preserving analysis raster.")
+            preview = analysis_pixels
+            preview_scale = min(1.0, 1600.0 / max(analysis_pixels.shape[1], analysis_pixels.shape[0]))
             if preview_scale < 1.0:
                 preview = cv2.resize(
-                    gray,
-                    (max(1, int(round(gray.shape[1] * preview_scale))),
-                     max(1, int(round(gray.shape[0] * preview_scale)))),
+                    analysis_pixels,
+                    (max(1, int(round(analysis_pixels.shape[1] * preview_scale))),
+                     max(1, int(round(analysis_pixels.shape[0] * preview_scale)))),
                     interpolation=cv2.INTER_AREA,
                 )
             success, encoded = cv2.imencode(".png", preview)
             if not success:
                 raise RuntimeError("Preview encoding failed.")
-            xml = build_musicxml(scene)
+            xml = Path(analysis_result["musicxml_path"]).read_text(encoding="utf-8")
+            identity_report_json = Path(analysis_result["identity_report_path"]).read_text(encoding="utf-8")
+            residual_bytes = Path(analysis_result["residual_path"]).read_bytes()
+            residual_download_available = len(residual_bytes) <= 12 * 1024 * 1024
+            residual_png_base64 = (
+                base64.b64encode(residual_bytes).decode("ascii")
+                if residual_download_available else None
+            )
             return {
                 "summary": {
                     "filename": filename,
@@ -349,16 +898,24 @@ async def analyze(file: UploadFile = File(...), page: int = Form(0)) -> dict:
                     "proposals": scene["proposal_count"],
                     "notehead_proposals": scene["note_count"],
                     "runtime_seconds": scene["runtime_seconds"],
+                    "browser_capture_method": browser_capture["method"] if browser_capture else None,
+                    "browser_capture_frames_encoded": browser_capture["frames_encoded"] if browser_capture else None,
+                    "browser_capture_fusion_performed": browser_capture["fusion_performed"] if browser_capture else None,
                 },
                 "warnings": scene["warnings"],
                 "source": scene["source"],
                 "scene": scene,
                 "musicxml": xml,
+                "identity_reconstruction": scene.get("identity_reconstruction", {}),
+                "identity_report_json": identity_report_json,
+                "residual_png_base64": residual_png_base64,
+                "residual_download_available": residual_download_available,
+                "residual_size_bytes": len(residual_bytes),
                 "source_preview_png_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
                 "geometry_render_png_base64": _render_base64(
                     (
-                        max(1, int(round(gray.shape[0] * preview_scale))),
-                        max(1, int(round(gray.shape[1] * preview_scale))),
+                        max(1, int(round(analysis_pixels.shape[0] * preview_scale))),
+                        max(1, int(round(analysis_pixels.shape[1] * preview_scale))),
                     ),
                     scene,
                     scale=preview_scale,
@@ -393,6 +950,34 @@ def render_current_geometry(scene: dict = Body(...)) -> dict:
         return {"geometry_render_png_base64": _render_base64(output_shape, scene, scale=scale)}
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/export-gltf")
+def export_gltf(payload: dict = Body(...)) -> dict:
+    scene = payload.get("scene", payload)
+    background_png = None
+    encoded_background = payload.get("background_png_base64") if "scene" in payload else None
+    if encoded_background is not None:
+        if not isinstance(encoded_background, str) or len(encoded_background) > 32 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Background preview payload is invalid or too large.")
+        try:
+            background_png = base64.b64decode(encoded_background, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail="Background preview must be base64-encoded PNG data.") from exc
+        if not background_png.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise HTTPException(status_code=422, detail="Background preview must be a PNG.")
+    if scene.get("schema") != "scoretwin-scene-0.1":
+        raise HTTPException(status_code=400, detail="Unrecognized ScoreTwin scene schema.")
+    if len(scene.get("notes", [])) > 5000 or len(scene.get("primitives", [])) > 30000:
+        raise HTTPException(status_code=413, detail="Scene contains too many notes or geometry primitives.")
+    try:
+        gltf = build_gltf(scene, background_png=background_png)
+        validation = validate_embedded_gltf(gltf)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if len(gltf.encode("utf-8")) > 45 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="The self-contained glTF export exceeds 45 MiB.")
+    return {"gltf": gltf, "validation": validation}
 
 
 @app.post("/api/export")

@@ -1,0 +1,156 @@
+{
+  "schema": "scoretwin-photo-smoke-report-v1",
+  "epistemic_status": "MĂSURAT — unlabeled pipeline smoke test; not an accuracy benchmark",
+  "data_status": "no_independent_symbolic_or_geometric_ground_truth",
+  "manifest_sha256": "b7c116caf40eb8b4b69cf48ec86ebb1c919a1b30461c7989681812e8abaa4c17",
+  "pages_n": 3,
+  "pages_source_bytes_preserved_n": 3,
+  "source_bytes_preserved_rate": 1.0,
+  "source_bytes_preserved_rate_wilson_95_ci": [
+    0.4385029682449546,
+    1.0
+  ],
+  "sampling_note": "Pages are purposively selected. Intervals below describe page-level variation under an iid resampling model and do not support population generalization.",
+  "coverage": {
+    "pages_with_staff_detected": 2,
+    "page_staff_detection_rate": 0.6666666666666666,
+    "page_staff_detection_rate_wilson_95_ci": [
+      0.20765960080204776,
+      0.9385080552796037
+    ],
+    "pages_with_notehead_proposals": 2,
+    "page_note_proposal_rate": 0.6666666666666666,
+    "page_note_proposal_rate_wilson_95_ci": [
+      0.20765960080204776,
+      0.9385080552796037
+    ]
+  },
+  "runtime_summary": {
+    "unit": "end_to_end_seconds_per_page",
+    "mean": 0.4318225556666666,
+    "mean_page_bootstrap_95_ci": [
+      0.417627459,
+      0.45398258299999994
+    ],
+    "bootstrap_unit": "page",
+    "bootstrap_rounds": 2000,
+    "bootstrap_seed": 20261029
+  },
+  "model_sha256": "8bbb7766b07385fbb4c3fb1e971d36b6d34dd111cc8ba7355a5d915930fe176a",
+  "model_training_metrics": {
+    "seed": 19,
+    "train_n": 360,
+    "holdout_n": 90,
+    "labels": [
+      "filled_head",
+      "hollow_head",
+      "artifact"
+    ],
+    "synthetic_holdout_accuracy": 0.9555555555555556,
+    "epochs": 24
+  },
+  "software": {
+    "scoretwin": "0.1.0",
+    "python": "3.9.6",
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "numpy": "1.22.0",
+    "opencv": "5.0.0"
+  },
+  "claims_not_supported": [
+    "notehead precision, recall or pitch accuracy",
+    "DID, IoU against ground truth, or pixel-level reconstructed identity",
+    "generalization beyond the listed pages"
+  ],
+  "per_page": [
+    {
+      "id": "pair-97-page-0",
+      "declared_capture_type": "scan",
+      "page_index": 0,
+      "source_sha256": "20f31482adc7c6048a6ead59ff163906985c7da83c2a44db435e896ca2b16a46",
+      "source_bytes": 1568903,
+      "source_bytes_preserved": true,
+      "source_image_shape_px": [
+        3587,
+        2326
+      ],
+      "analysis_image_shape_px": [
+        3587,
+        2326
+      ],
+      "staffs_detected": 0,
+      "raw_proposals": 0,
+      "notehead_proposals": 0,
+      "unknown_regions": 0,
+      "estimated_staffline_angle_deg": 0.179,
+      "analysis_runtime_seconds": 0.1236,
+      "end_to_end_runtime_seconds": 0.417627459,
+      "warnings": [
+        "No five-line staff group detected. Preserve the source and review the page manually.",
+        "No noteheads passed the current proposal classifier; the MusicXML will contain no inferred notes.",
+        "Pitch proposals assume treble clef and a C-major/no-accidental interpretation; key signatures and accidentals are not yet inferred.",
+        "Durations, voice assignments, instrument mapping and full score structure remain unresolved and are marked for review in MusicXML.",
+        "The synthetic model's confidence is not calibrated confidence on real manuscripts or photographs.",
+        "Geometry-fit scores are local template-correlation values, not probabilities; rejected fits leave the original proposal unchanged."
+      ]
+    },
+    {
+      "id": "pair-106-page-0",
+      "declared_capture_type": "scan",
+      "page_index": 0,
+      "source_sha256": "21ab6f8c78519523fd758e65ddd5d11a39147c7d6676533c90341ef7ac5bbba7",
+      "source_bytes": 2194656,
+      "source_bytes_preserved": true,
+      "source_image_shape_px": [
+        3037,
+        2032
+      ],
+      "analysis_image_shape_px": [
+        3037,
+        2032
+      ],
+      "staffs_detected": 1,
+      "raw_proposals": 9,
+      "notehead_proposals": 5,
+      "unknown_regions": 4,
+      "estimated_staffline_angle_deg": 1.829,
+      "analysis_runtime_seconds": 0.2751,
+      "end_to_end_runtime_seconds": 0.4238576249999999,
+      "warnings": [
+        "Estimated staff-line tilt is 1.83 degrees; this version does not rectify rotation or perspective.",
+        "Pitch proposals assume treble clef and a C-major/no-accidental interpretation; key signatures and accidentals are not yet inferred.",
+        "Durations, voice assignments, instrument mapping and full score structure remain unresolved and are marked for review in MusicXML.",
+        "The synthetic model's confidence is not calibrated confidence on real manuscripts or photographs.",
+        "Geometry-fit scores are local template-correlation values, not probabilities; rejected fits leave the original proposal unchanged."
+      ]
+    },
+    {
+      "id": "pair-106-page-1",
+      "declared_capture_type": "scan",
+      "page_index": 1,
+      "source_sha256": "21ab6f8c78519523fd758e65ddd5d11a39147c7d6676533c90341ef7ac5bbba7",
+      "source_bytes": 2194656,
+      "source_bytes_preserved": true,
+      "source_image_shape_px": [
+        3013,
+        2046
+      ],
+      "analysis_image_shape_px": [
+        3013,
+        2046
+      ],
+      "staffs_detected": 5,
+      "raw_proposals": 82,
+      "notehead_proposals": 40,
+      "unknown_regions": 42,
+      "estimated_staffline_angle_deg": 0.165,
+      "analysis_runtime_seconds": 0.3096,
+      "end_to_end_runtime_seconds": 0.45398258299999994,
+      "warnings": [
+        "Pitch proposals assume treble clef and a C-major/no-accidental interpretation; key signatures and accidentals are not yet inferred.",
+        "Durations, voice assignments, instrument mapping and full score structure remain unresolved and are marked for review in MusicXML.",
+        "The synthetic model's confidence is not calibrated confidence on real manuscripts or photographs.",
+        "Geometry-fit scores are local template-correlation values, not probabilities; rejected fits leave the original proposal unchanged."
+      ]
+    }
+  ]
+}

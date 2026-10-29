@@ -1,0 +1,54 @@
+{
+  "schema": "scoretwin-human-calibration-v1",
+  "rating_scale": {
+    "min": 1,
+    "max": 7,
+    "anchors": {
+      "1": "clearly different",
+      "7": "visually identical"
+    }
+  },
+  "metric_directions": {
+    "mask_iou": "higher",
+    "geometry_f1": "higher",
+    "center_error_sp": "lower"
+  },
+  "study_design": {
+    "blinded": true,
+    "randomized_order": true,
+    "rating_dimension": "visual_structure",
+    "preregistered": false,
+    "example_not_data": true
+  },
+  "pairs": [
+    {
+      "id": "pair-001",
+      "independence_group": "source-piece-001",
+      "ratings": {
+        "rater-01": 3,
+        "rater-02": 4,
+        "rater-03": 3
+      },
+      "metrics": {
+        "mask_iou": 0.72,
+        "geometry_f1": 0.68,
+        "center_error_sp": 0.31
+      }
+    },
+    {
+      "id": "repeat-001",
+      "independence_group": "source-piece-001",
+      "repeat_group": "pair-001",
+      "ratings": {
+        "rater-01": 4,
+        "rater-02": 4,
+        "rater-03": 3
+      },
+      "metrics": {
+        "mask_iou": 0.72,
+        "geometry_f1": 0.68,
+        "center_error_sp": 0.31
+      }
+    }
+  ]
+}

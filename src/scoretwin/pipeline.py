@@ -12,7 +12,9 @@ import cv2
 import numpy as np
 
 from . import __version__
-from .imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, refine_notehead_geometry, staff_step_and_pitch
+from .capture_quality import diagnose_capture_quality
+from .imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch
+from .gltf_export import build_gltf, validate_embedded_gltf
 from .musicxml import build_musicxml
 from .proposal import get_default_model, load_model, predict_patch
 
@@ -63,6 +65,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
         raise ValueError("Input image is too small to contain a score page.")
     started = time.perf_counter()
     estimated_skew = estimate_global_skew_degrees(gray)
+    capture_quality = diagnose_capture_quality(gray)
     staffs, binary, staff_mask = detect_staff_systems(gray)
     candidates = extract_notehead_candidates(gray, binary, staff_mask, staffs)
     model_training_metrics: dict = {}
@@ -358,6 +361,11 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             relations.append({"type": "candidate_region_in_staff", "source": item["id"], "target": system_id})
 
     warnings = []
+    for advisory in capture_quality["advisories"]:
+        warnings.append(
+            f"Capture quality ({advisory['code']}): {advisory['action']} "
+            "(heuristic, not a calibrated probability)."
+        )
     if estimated_skew is not None and abs(estimated_skew) > 0.75:
         warnings.append(
             f"Estimated staff-line tilt is {estimated_skew:.2f} degrees; this version does not rectify rotation or perspective."
@@ -380,6 +388,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             "rotation_rectified": False,
             "perspective_rectified": False,
         },
+        "capture_quality": capture_quality,
         "staffs": staff_objects,
         "primitives": primitives,
         "relations": relations,
@@ -490,6 +499,9 @@ def process_file(
     output_dir: str | Path,
     page: int = 0,
     model_path: str | Path | None = None,
+    rectify_skew: bool = False,
+    max_skew_degrees: float = 12.0,
+    rectify_corners: list | None = None,
 ) -> dict:
     """Generate a self-contained analysis bundle and preserve input bytes unchanged."""
     source = Path(input_path)
@@ -500,9 +512,75 @@ def process_file(
 
     source_bytes = source.read_bytes()
     source_hash = hashlib.sha256(source_bytes).hexdigest()
-    gray = load_grayscale(source, page=page)
+    source_gray = load_grayscale(source, page=page)
+    source_pixels = load_pixel_array(source, page=page)
+    if source_pixels.shape[:2] != source_gray.shape:
+        raise ValueError("Decoded color/grayscale source frames have different dimensions.")
+    if rectify_skew and rectify_corners is not None:
+        raise ValueError("Choose either global-skew rectification or page-corner rectification, not both.")
+    if rectify_corners is not None:
+        rectification = rectify_page_quadrilateral(source_gray, rectify_corners)
+    elif rectify_skew:
+        rectification = rectify_global_skew(source_gray, max_abs_skew_degrees=max_skew_degrees)
+    else:
+        rectification = None
+    analysis_gray = rectification.image if rectification is not None else source_gray
+    if rectification is not None and rectification.applied:
+        matrix = np.asarray(rectification.source_to_rectified, dtype=np.float64)
+        output_size = (int(analysis_gray.shape[1]), int(analysis_gray.shape[0]))
+        border_value = 255 if source_pixels.ndim == 2 else (255, 255, 255)
+        analysis_pixels = cv2.warpPerspective(
+            source_pixels,
+            matrix,
+            output_size,
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=border_value,
+        )
+    else:
+        analysis_pixels = source_pixels.copy()
+    if analysis_pixels.shape[:2] != analysis_gray.shape:
+        raise RuntimeError("Color/grayscale analysis rasters do not share one coordinate frame.")
     model = load_model(model_path) if model_path else get_default_model()
-    scene = analyze_array(gray, model=model)
+    scene = analyze_array(analysis_gray, model=model)
+    residual_skew = scene["capture_diagnostics"]["estimated_staffline_angle_deg"]
+    source_skew = (
+        rectification.estimated_skew_degrees
+        if rectification is not None and rectification.estimated_skew_degrees is not None
+        else estimate_global_skew_degrees(source_gray)
+        if rectification is not None
+        else residual_skew
+    )
+    source_to_analysis = (
+        rectification.source_to_rectified if rectification is not None else np.eye(3, dtype=np.float64)
+    )
+    analysis_to_source = (
+        rectification.rectified_to_source if rectification is not None else np.eye(3, dtype=np.float64)
+    )
+    scene["coordinate_frame"] = (
+        "analysis_raster_pixel_centers" if rectification is not None else "source_raster_pixel_centers"
+    )
+    scene["capture_diagnostics"] = {
+        **scene["capture_diagnostics"],
+        "estimated_staffline_angle_deg": source_skew,
+        "analysis_residual_staffline_angle_deg": residual_skew,
+        "rotation_rectification_requested": bool(rectify_skew),
+        "rotation_rectified": bool(
+            rectification is not None
+            and rectification.applied
+            and rectification.method == "global_rotation"
+        ),
+        "perspective_rectification_requested": rectify_corners is not None,
+        "perspective_rectified": bool(
+            rectification is not None and rectification.method == "manual_page_quadrilateral"
+        ),
+        "rectification_method": rectification.method if rectification is not None else "none",
+        "source_image_shape_px": [int(source_gray.shape[0]), int(source_gray.shape[1])],
+        "analysis_image_shape_px": [int(analysis_gray.shape[0]), int(analysis_gray.shape[1])],
+        "source_to_analysis": source_to_analysis.tolist(),
+        "analysis_to_source": analysis_to_source.tolist(),
+        "rectification_reason": rectification.reason if rectification is not None else "not_requested",
+    }
     if model_path is not None:
         model_file = Path(model_path)
         scene["reproducibility"]["proposal_model"]["checkpoint_path"] = str(model_file)
@@ -521,8 +599,8 @@ def process_file(
     (output / preserved_name).write_bytes(source_bytes)
     scene["source"]["preserved_file"] = preserved_name
 
-    overlay = render_overlay(gray, scene)
-    geometry_render = render_geometry_scene(gray.shape, scene)
+    overlay = render_overlay(analysis_gray, scene)
+    geometry_render = render_geometry_scene(analysis_gray.shape, scene)
     ok, encoded = cv2.imencode(".png", overlay)
     if not ok:
         raise RuntimeError("Could not encode diagnostic overlay.")
@@ -532,6 +610,113 @@ def process_file(
         raise RuntimeError("Could not encode geometry render.")
     (output / "geometry-render.png").write_bytes(geometry_encoded.tobytes())
 
+    # Exact pixel reconstruction by a signed residual. For color source images the
+    # structural render is lifted to BGR, so the residual retains chromatic information
+    # that the grayscale OMR detector does not use.
+    geometry_pixels = (
+        geometry_render
+        if analysis_pixels.ndim == 2
+        else cv2.cvtColor(geometry_render, cv2.COLOR_GRAY2BGR)
+    )
+    if geometry_pixels.shape != analysis_pixels.shape:
+        raise RuntimeError("Geometry render and analysis pixels do not share channel dimensions.")
+    residual_signed = analysis_pixels.astype(np.int16) - geometry_pixels.astype(np.int16)
+    residual_offset = (residual_signed.astype(np.int32) + 255).astype(np.uint16)
+    residual_path = output / "residual-offset255.png"
+    if not cv2.imwrite(str(residual_path), residual_offset):
+        raise IOError("Could not write the uint16 photometric residual.")
+    stored_residual = cv2.imread(str(residual_path), cv2.IMREAD_UNCHANGED)
+    if stored_residual is None or stored_residual.dtype != np.uint16 or stored_residual.shape != analysis_pixels.shape:
+        raise IOError("The saved photometric residual failed its lossless read-back check.")
+
+    reconstruction_int = geometry_pixels.astype(np.int32) + stored_residual.astype(np.int32) - 255
+    if reconstruction_int.min() < 0 or reconstruction_int.max() > 255:
+        raise IOError("The residual reconstruction exceeded the uint8 pixel range.")
+    reconstructed = reconstruction_int.astype(np.uint8)
+    exact_pixels = bool(np.array_equal(reconstructed, analysis_pixels))
+    if not exact_pixels:
+        raise IOError("Geometry render plus residual does not reconstruct the analysis raster exactly.")
+    reconstructed_path = output / "reconstructed-analysis.png"
+    if not cv2.imwrite(str(reconstructed_path), reconstructed):
+        raise IOError("Could not write the reconstructed analysis raster.")
+    reconstructed_readback = cv2.imread(str(reconstructed_path), cv2.IMREAD_UNCHANGED)
+    if reconstructed_readback is None or not np.array_equal(reconstructed_readback, analysis_pixels):
+        raise IOError("The saved reconstructed image failed its pixel-equality check.")
+
+    analysis_pixels_path = output / "analysis-raster-pixels.png"
+    if not cv2.imwrite(str(analysis_pixels_path), analysis_pixels):
+        raise IOError("Could not write the channel-preserving analysis raster.")
+
+    pixel_mismatches = (
+        np.any(reconstructed != analysis_pixels, axis=2)
+        if analysis_pixels.ndim == 3
+        else reconstructed != analysis_pixels
+    )
+    absolute_error = np.abs(reconstructed.astype(np.int16) - analysis_pixels.astype(np.int16))
+    identity_reconstruction = {
+        "schema": "scoretwin-lossless-residual-0.1",
+        "analysis_raster_encoding": (
+            "uint8 grayscale" if analysis_pixels.ndim == 2
+            else f"uint8 {analysis_pixels.shape[2]}-channel BGR analysis raster"
+        ),
+        "residual_encoding": "uint16 PNG = analysis_channel_value - geometry_channel_value + 255",
+        "reconstruction_equation": "analysis_channel_value = geometry_channel_value + residual_uint16 - 255",
+        "source_analysis_raster_sha256": hashlib.sha256(analysis_pixels.tobytes()).hexdigest(),
+        "geometry_render_sha256": hashlib.sha256(geometry_pixels.tobytes()).hexdigest(),
+        "reconstructed_raster_sha256": hashlib.sha256(reconstructed.tobytes()).hexdigest(),
+        "residual_file_sha256": hashlib.sha256(residual_path.read_bytes()).hexdigest(),
+        "pixel_count": int(analysis_pixels.shape[0] * analysis_pixels.shape[1]),
+        "channel_value_count": int(analysis_pixels.size),
+        "mismatched_pixel_count": int(np.count_nonzero(pixel_mismatches)),
+        "maximum_absolute_pixel_error": int(absolute_error.max()),
+        "exact_pixel_reconstruction_verified": exact_pixels,
+        "applies_to": (
+            "decoded grayscale analysis raster" if analysis_pixels.ndim == 2
+            else "decoded BGR color analysis raster"
+        ) + ", including resampling if rectification is enabled",
+        "does_not_claim": [
+            "symbolic music correctness",
+            "recovery of original compressed source bytes from decoded pixels",
+            "recovery of discarded alpha after white compositing",
+            "physical ink-depth recovery",
+            "lossy compression of the residual",
+        ],
+        "source_file_bytes_preserved_separately": True,
+    }
+    identity_report_path = output / "identity-reconstruction.json"
+    identity_report_path.write_text(
+        json.dumps(identity_reconstruction, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    scene["identity_reconstruction"] = identity_reconstruction
+
+    analysis_raster_path = None
+    capture_transform_path = None
+    if rectification is not None:
+        analysis_raster_path = output / "analysis-raster.png"
+        if not cv2.imwrite(str(analysis_raster_path), analysis_gray):
+            raise IOError("Could not write the analysis raster.")
+        capture_transform_path = output / "capture-transform.json"
+        capture_transform_path.write_text(json.dumps({
+            "schema": "scoretwin-capture-rectification-0.2",
+            "source_sha256": source_hash,
+            "source_image_shape_px": [int(source_gray.shape[0]), int(source_gray.shape[1])],
+            "analysis_image_shape_px": [int(analysis_gray.shape[0]), int(analysis_gray.shape[1])],
+            "source_bytes_preserved": True,
+            "rectification": rectification.to_dict(),
+        }, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    texture_ok, texture_encoded = cv2.imencode(".png", analysis_pixels)
+    if not texture_ok:
+        raise RuntimeError("Could not encode the analysis raster for the 3D scene texture.")
+    gltf_text = build_gltf(scene, background_png=texture_encoded.tobytes())
+    gltf_validation = validate_embedded_gltf(gltf_text)
+    gltf_path = output / "scene.gltf"
+    gltf_path.write_text(gltf_text, encoding="utf-8")
+    scene["exports"] = {
+        "gltf_file": gltf_path.name,
+        "gltf_validation": gltf_validation,
+        "gltf_semantic_depth_is_physical": False,
+    }
     (output / "scene.json").write_text(json.dumps(scene, indent=2, ensure_ascii=False), encoding="utf-8")
     musicxml = build_musicxml(scene)
     (output / "provisional.musicxml").write_text(musicxml, encoding="utf-8")
@@ -546,6 +731,15 @@ def process_file(
         "musicxml_path": str(output / "provisional.musicxml"),
         "overlay_path": str(output / "overlay.png"),
         "geometry_render_path": str(output / "geometry-render.png"),
+        "residual_path": str(residual_path),
+        "reconstructed_raster_path": str(reconstructed_path),
+        "identity_report_path": str(identity_report_path),
+        "identity_reconstruction": identity_reconstruction,
+        "gltf_path": str(gltf_path),
+        "gltf_validation": gltf_validation,
+        "analysis_raster_path": str(analysis_raster_path) if analysis_raster_path else None,
+        "analysis_pixels_path": str(analysis_pixels_path),
+        "capture_transform_path": str(capture_transform_path) if capture_transform_path else None,
         "source_hash_verified": True,
         "source_sha256": source_hash,
     }

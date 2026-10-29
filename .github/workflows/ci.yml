@@ -24,3 +24,10 @@ jobs:
         run: scoretwin train-model --out /tmp/proposal.npz --samples-per-class 120 --epochs 20 --seed 19
       - name: Verify CLI entry point
         run: scoretwin --help
+      - name: Verify evaluation command interfaces
+        run: |
+          scoretwin compare --help
+          scoretwin measure-bundle --help
+          scoretwin calibrate-human --help
+          scoretwin evaluate-manifest --help
+          scoretwin validate-gltf --help
