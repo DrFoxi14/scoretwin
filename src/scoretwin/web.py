@@ -120,8 +120,11 @@ function syncPrimitive(note){
  primitive.geometry.bbox_px=box.slice();
  primitive.symbolic=primitive.symbolic||{};
  primitive.symbolic.pitch_proposal={...note.pitch};
-}
-function updatePitchFromGeometry(note){
+ primitive.symbolic.accidental=note.accidental||null;
+ primitive.symbolic.duration_ticks=note.duration_ticks??null;
+ primitive.symbolic.duration_type=note.type||null;
+ primitive.symbolic.voice=note.voice??null;
+}function updatePitchFromGeometry(note){
  const staff=currentScene.staffs[note.staff_index];if(!staff)return;
  const continuous=(staff.bottom-note.center[1])/(staff.spacing/2);
  const step=Math.round(continuous);
@@ -243,28 +246,113 @@ function buildEditor(){
  const holder=document.getElementById('editor');holder.replaceChildren();
  if(!currentScene||!currentScene.notes.length){holder.textContent='No notehead proposals are ready for pitch editing.';return;}
  const letters=['C','D','E','F','G','A','B'];
+ const accidentalOptions=[
+  {value:'none',label:'No accidental'},
+  {value:'natural',label:'Natural'},
+  {value:'sharp',label:'Sharp'},
+  {value:'flat',label:'Flat'},
+  {value:'double-sharp',label:'Double sharp'},
+  {value:'flat-flat',label:'Double flat'},
+  {value:'quarter-sharp',label:'Quarter sharp'},
+  {value:'quarter-flat',label:'Quarter flat'},
+  {value:'three-quarters-sharp',label:'3/4 sharp'},
+  {value:'three-quarters-flat',label:'3/4 flat'}
+ ];
+ const accidentalAlter={'natural':0,'sharp':1,'flat':-1,'double-sharp':2,'flat-flat':-2,'quarter-sharp':0.5,'quarter-flat':-0.5,'three-quarters-sharp':1.5,'three-quarters-flat':-1.5};
+ const durationOptions=[
+  {value:'whole',label:'Whole'},
+  {value:'half',label:'Half'},
+  {value:'quarter',label:'Quarter'},
+  {value:'eighth',label:'Eighth'},
+  {value:'16th',label:'16th'},
+  {value:'32nd',label:'32nd'},
+  {value:'64th',label:'64th'}
+ ];
+ const durationTicks={'whole':64,'half':32,'quarter':16,'eighth':8,'16th':4,'32nd':2,'64th':1};
+ const makeSelect=(label,options,value,onChange)=>{
+  const select=document.createElement('select');select.setAttribute('aria-label',label);select.title=label;
+  options.forEach(item=>{
+   const option=document.createElement('option');option.value=item.value;option.textContent=item.label;
+   if(item.value===value)option.selected=true;
+   select.appendChild(option);
+  });
+  select.addEventListener('change',()=>onChange(select.value));
+  return select;
+ };
  currentScene.notes.forEach((note,index)=>{
   const row=document.createElement('div');row.className='editor-row';
   const hint=(note.duration_hypothesis&&note.duration_hypothesis.candidate)||'duration unresolved';
-  const title=document.createElement('span');title.textContent='Proposal '+(index+1)+' · '+note.id+' · '+Math.round(note.center[0])+','+Math.round(note.center[1])+' · '+hint;
-  const select=document.createElement('select');select.setAttribute('aria-label','Pitch for '+note.id);
-  for(let octave=2;octave<=7;octave++)letters.forEach(letter=>{
-   const option=document.createElement('option');option.value=letter+octave;option.textContent=letter+octave;
-   if(letter===note.pitch.step&&octave===Number(note.pitch.octave))option.selected=true;
-   select.appendChild(option);
-  });
-  select.addEventListener('change',()=>{
-   const match=select.value.match(/^([A-G])([2-7])$/);if(!match)return;
-   currentScene.notes[index].pitch={step:match[1],octave:Number(match[2])};
-   currentScene.notes[index].uncertainty=currentScene.notes[index].uncertainty||[];
-   currentScene.notes[index].manually_edited_pitch=true;
-   syncPrimitive(currentScene.notes[index]);
-   draw3d();drawPage();
-  });
-  row.append(title,select);holder.appendChild(row);
+  const title=document.createElement('span');
+  title.textContent='Note '+(index+1)+' · '+note.id+' · '+Math.round(note.center[0])+','+Math.round(note.center[1])+' · '+hint;
+  const pitchSelect=makeSelect(
+   'Pitch for '+note.id,
+   Array.from({length:42},(_,position)=>{
+    const letter=letters[position%7],octave=2+Math.floor(position/7);
+    return {value:letter+octave,label:letter+octave};
+   }),
+   note.pitch.step+Number(note.pitch.octave),
+   value=>{
+    const match=value.match(/^([A-G])([2-7])$/);if(!match)return;
+    note.pitch={...note.pitch,step:match[1],octave:Number(match[2])};
+    note.manually_edited_pitch=true;
+    syncPrimitive(note);draw3d();drawPage();
+    document.getElementById('status').textContent='Pitch proposal updated. Check key signature and source accidental before export.';
+   }
+  );
+  const currentAccidental=note.accidental||note.pitch.accidental||'none';
+  const accidentalSelect=makeSelect(
+   'Accidental for '+note.id,
+   accidentalOptions,
+   currentAccidental,
+   value=>{
+    if(value==='none'){
+     delete note.accidental;
+     delete note.pitch.accidental;
+     delete note.pitch.alter;
+    }else{
+     note.accidental=value;
+     note.pitch.accidental=value;
+     note.pitch.alter=accidentalAlter[value];
+    }
+    note.manually_edited_accidental=true;
+    note.uncertainty=(note.uncertainty||[]).filter(item=>item!=='accidental');
+    syncPrimitive(note);draw3d();drawPage();
+    document.getElementById('status').textContent='Accidental updated as an explicit symbolic annotation. Confirm key-signature context before export.';
+   }
+  );
+  const currentDuration=durationTicks[note.type]?note.type:'quarter';
+  const durationSelect=makeSelect(
+   'Duration for '+note.id,
+   durationOptions,
+   currentDuration,
+   value=>{
+    currentScene.timing_units='ticks_16_per_quarter';
+    note.duration_ticks=durationTicks[value];
+    note.duration=durationTicks[value];
+    note.type=value;
+    note.manually_edited_duration=true;
+    note.uncertainty=(note.uncertainty||[]).filter(item=>item!=='duration');
+    syncPrimitive(note);draw3d();drawPage();
+    document.getElementById('status').textContent='Duration updated: '+value+'. Rhythm remains a user annotation; review measure total and voice timing.';
+   }
+  );
+  const voiceOptions=[1,2,3,4].map(value=>({value:String(value),label:'Voice '+value}));
+  const voiceSelect=makeSelect(
+   'Voice for '+note.id,
+   voiceOptions,
+   String(note.voice||1),
+   value=>{
+    note.voice=Number(value);
+    note.manually_edited_voice=true;
+    note.uncertainty=(note.uncertainty||[]).filter(item=>item!=='voice');
+    syncPrimitive(note);draw3d();drawPage();
+    document.getElementById('status').textContent='Voice '+value+' selected. Review overlaps and timing in the exported score.';
+   }
+  );
+  row.append(title,pitchSelect,accidentalSelect,durationSelect,voiceSelect);
+  holder.appendChild(row);
  });
-}
-const form=document.getElementById('upload');
+}const form=document.getElementById('upload');
 const liveVideo=document.getElementById('live-camera');
 const liveSampler=document.getElementById('live-camera-sampler');
 const liveSamplerCtx=liveSampler.getContext('2d',{willReadFrequently:true});
