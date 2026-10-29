@@ -339,14 +339,21 @@ async def analyze(file: UploadFile = File(...)) -> dict:
                 "scene": scene,
                 "musicxml": xml,
                 "source_preview_png_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
-                "geometry_render_png_base64": _render_base64(gray.shape, scene),
+                "geometry_render_png_base64": _render_base64(
+                    (
+                        max(1, int(round(gray.shape[0] * preview_scale))),
+                        max(1, int(round(gray.shape[1] * preview_scale))),
+                    ),
+                    scene,
+                    scale=preview_scale,
+                ),
             }
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def _render_base64(shape: tuple[int, int], scene: dict) -> str:
-    rendered = render_geometry_scene(shape, scene)
+def _render_base64(shape: tuple[int, int], scene: dict, scale: float = 1.0) -> str:
+    rendered = render_geometry_scene(shape, scene, scale=scale)
     success, encoded = cv2.imencode(".png", rendered)
     if not success:
         raise RuntimeError("Could not encode geometry render.")
@@ -364,8 +371,10 @@ def render_current_geometry(scene: dict = Body(...)) -> dict:
         raise HTTPException(status_code=422, detail="Scene image dimensions are required.") from exc
     if height < 32 or width < 32 or height * width > 80_000_000:
         raise HTTPException(status_code=413, detail="Image dimensions are invalid or exceed the 80 megapixel limit.")
+    scale = min(1.0, 1600.0 / max(height, width))
+    output_shape = (max(1, int(round(height * scale))), max(1, int(round(width * scale))))
     try:
-        return {"geometry_render_png_base64": _render_base64((height, width), scene)}
+        return {"geometry_render_png_base64": _render_base64(output_shape, scene, scale=scale)}
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
