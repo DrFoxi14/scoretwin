@@ -532,6 +532,7 @@ def build_gltf(
             "depth_semantics": "Z offsets are visualization layers, not measured physical ink depth",
             "source": scene.get("source", {}),
             "capture_diagnostics": scene.get("capture_diagnostics", {}),
+            "identity_reconstruction": scene.get("identity_reconstruction", {}),
             "unsupported_primitive_count": len(skipped),
             "unsupported_primitives": skipped[:100],
             "primitive_count": len(nodes) - (1 if background_png is not None else 0),
