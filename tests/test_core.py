@@ -13,7 +13,7 @@ from scoretwin.benchmark import evaluate_perspective_capture, evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
 from scoretwin.benchmark_photo_smoke import evaluate_photo_smoke
 from scoretwin.gltf_export import build_gltf, validate_embedded_gltf
-from scoretwin.metrics import binary_mask_metrics, compare_idsr_components, geometry_metrics, measure_bundle_storage, photometric_metrics, relation_metrics, residual_compressibility_metrics
+from scoretwin.metrics import binary_mask_metrics, compare_idsr_components, geometry_metrics, mask_attack_sensitivity, measure_bundle_storage, photometric_metrics, relation_metrics, residual_compressibility_metrics
 from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
@@ -401,6 +401,22 @@ def test_component_metrics_report_exact_photo_geometry_masks_and_relations():
     assert report["aggregate_did"] is None
     assert "weights require preregistered calibration" in report["aggregate_did_status"]
     assert report["metrics"]["photometric"]["exact_pixel_fraction"] == 1.0
+
+
+def test_mask_redteam_shows_iou_can_hide_a_missing_small_symbol():
+    reference = np.zeros((128, 128), dtype=np.uint8)
+    reference[20:80, 20:100] = 255
+    reference[95:99, 95:99] = 255  # a disconnected small glyph proxy
+
+    report = mask_attack_sensitivity(reference, reference)
+    assert report["baseline_iou"] == 1.0
+    assert "dilation" in report["attacks"]["one_pixel_dilation"] or report["attacks"]["one_pixel_dilation"]["iou"] < 1.0
+    missing_small_object = report["attacks"]["remove_smallest_component"]
+    assert missing_small_object["changed_candidate_pixels"] == 16
+    assert 0.99 < missing_small_object["iou"] < 1.0
+    assert missing_small_object["foreground_component_count"] == 1
+    assert any("missing small symbol" in detail for detail in report["interpretation"])
+    assert any("per-object notehead/stem precision and recall" in defense for defense in report["defenses"])
 
 
 def test_bundle_storage_accounting_counts_all_artifacts_except_source_copy(tmp_path):
