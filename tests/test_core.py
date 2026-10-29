@@ -510,7 +510,7 @@ def test_promote_unknown_region_creates_a_user_added_note_without_mutating_input
     assert note["pitch"] == {"step": "G", "octave": 4}
     assert note["pitch_confidence"] is None
     assert note["duration_hypothesis"]["used_for_musicxml_duration"] is False
-    primitive = edited["primitives"][0]
+    primitive = next(value for value in edited["primitives"] if value["id"] == note["id"])
     assert primitive["id"] == note["id"]
     assert primitive["kind"] == "notehead"
     assert primitive["provenance"]["automatic_recognition_claimed"] is False
