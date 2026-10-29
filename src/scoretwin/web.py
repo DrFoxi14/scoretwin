@@ -579,6 +579,7 @@ async def analyze(
     file: UploadFile = File(...),
     page: int = Form(0),
     corners_json: str | None = Form(None),
+    capture_metadata_json: str | None = Form(None),
 ) -> dict:
     filename = Path(file.filename or "upload.bin").name
     suffix = Path(filename).suffix.lower()
@@ -593,6 +594,66 @@ async def analyze(
         corners = json.loads(corners_json) if corners_json else None
         if corners is not None and not isinstance(corners, list):
             raise ValueError("corners_json must be a JSON array of four [x, y] points.")
+        browser_capture = None
+        if capture_metadata_json:
+            if len(capture_metadata_json) > 16000:
+                raise ValueError("capture_metadata_json exceeds the 16 KB limit.")
+            parsed_capture = json.loads(capture_metadata_json)
+            if not isinstance(parsed_capture, dict):
+                raise ValueError("capture_metadata_json must encode a JSON object.")
+            method = parsed_capture.get("method")
+            if method != "live_camera_burst_best_single_frame":
+                raise ValueError("Unknown browser capture method.")
+            frames_requested = parsed_capture.get("frames_requested")
+            frames_encoded = parsed_capture.get("frames_encoded")
+            if (
+                isinstance(frames_requested, bool) or not isinstance(frames_requested, int)
+                or not 1 <= frames_requested <= 10
+            ):
+                raise ValueError("frames_requested must be an integer from 1 to 10.")
+            if (
+                isinstance(frames_encoded, bool) or not isinstance(frames_encoded, int)
+                or not 1 <= frames_encoded <= frames_requested
+            ):
+                raise ValueError("frames_encoded must be between 1 and frames_requested.")
+            raw_scores = parsed_capture.get("frame_scores")
+            if not isinstance(raw_scores, list) or len(raw_scores) != frames_encoded:
+                raise ValueError("frame_scores must contain one score record for each encoded frame.")
+            safe_scores = []
+            for index, item in enumerate(raw_scores):
+                if not isinstance(item, dict):
+                    raise ValueError(f"frame_scores[{index}] must be an object.")
+                row = {}
+                for key in ("rank", "width_px", "height_px"):
+                    value = item.get(key)
+                    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                        raise ValueError(f"frame_scores[{index}].{key} must be a positive integer.")
+                    row[key] = int(value)
+                for key in ("contrast", "edge_energy", "selection_score"):
+                    value = item.get(key)
+                    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                        raise ValueError(f"frame_scores[{index}].{key} must be finite.")
+                    row[key] = float(value)
+                safe_scores.append(row)
+            selected_width = parsed_capture.get("selected_width_px")
+            selected_height = parsed_capture.get("selected_height_px")
+            if (
+                isinstance(selected_width, bool) or not isinstance(selected_width, int) or selected_width < 1
+                or isinstance(selected_height, bool) or not isinstance(selected_height, int) or selected_height < 1
+            ):
+                raise ValueError("Selected frame width and height must be positive integers.")
+            browser_capture = {
+                "method": method,
+                "frames_requested": frames_requested,
+                "frames_encoded": frames_encoded,
+                "selection_metric": "edge_energy_times_contrast_saturation_on_192x144_preview",
+                "selection_metric_calibrated": False,
+                "frame_scores": safe_scores,
+                "selected_width_px": int(selected_width),
+                "selected_height_px": int(selected_height),
+                "fusion_performed": False,
+                "provenance": "client-reported capture metadata; measurement is not independently verified by the server",
+            }
         with tempfile.TemporaryDirectory(prefix="scoretwin-") as directory:
             input_path = Path(directory) / ("source" + suffix)
             input_path.write_bytes(contents)
@@ -612,6 +673,7 @@ async def analyze(
                 **scene["source"],
                 "filename": filename,
                 "server_persisted": False,
+                **({"browser_capture": browser_capture} if browser_capture is not None else {}),
             }
             analysis_pixels_path = analysis_result["analysis_pixels_path"]
             analysis_pixels = cv2.imread(str(analysis_pixels_path), cv2.IMREAD_UNCHANGED)
@@ -648,6 +710,9 @@ async def analyze(
                     "proposals": scene["proposal_count"],
                     "notehead_proposals": scene["note_count"],
                     "runtime_seconds": scene["runtime_seconds"],
+                    "browser_capture_method": browser_capture["method"] if browser_capture else None,
+                    "browser_capture_frames_encoded": browser_capture["frames_encoded"] if browser_capture else None,
+                    "browser_capture_fusion_performed": browser_capture["fusion_performed"] if browser_capture else None,
                 },
                 "warnings": scene["warnings"],
                 "source": scene["source"],
