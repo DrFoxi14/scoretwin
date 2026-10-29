@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from itertools import product
+import platform
 
+import cv2
 import numpy as np
+
+from . import __version__
 
 from .imaging import detect_staff_systems
 from .pipeline import analyze_array
@@ -116,5 +119,13 @@ def evaluate_synthetic(
         "pitch_accuracy_on_matched_notes": total_pitch_correct / total_true_positive if total_true_positive else 0.0,
         "mean_center_error_px": total_geometry_error / total_true_positive if total_true_positive else None,
         "mean_runtime_seconds": total_runtime / pages,
+        "software": {
+            "scoretwin": __version__,
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "numpy": np.__version__,
+            "opencv": cv2.__version__,
+        },
+        "proposal_model_training_metrics": model.get("training_metrics", {}),
         "per_page": per_page,
     }

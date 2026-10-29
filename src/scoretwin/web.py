@@ -302,6 +302,9 @@ async def analyze(file: UploadFile = File(...), page: int = Form(0)) -> dict:
             gray = load_grayscale(input_path, page=page)
             model = load_model(MODEL_PATH) if MODEL_PATH and Path(MODEL_PATH).exists() else get_default_model()
             scene = analyze_array(gray, model=model)
+            if MODEL_PATH and Path(MODEL_PATH).exists():
+                scene["reproducibility"]["proposal_model"]["checkpoint_path"] = MODEL_PATH
+                scene["reproducibility"]["proposal_model"]["checkpoint_sha256"] = hashlib.sha256(Path(MODEL_PATH).read_bytes()).hexdigest()
             source_sha256 = hashlib.sha256(contents).hexdigest()
             scene["source"] = {
                 "filename": filename,

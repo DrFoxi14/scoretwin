@@ -10,7 +10,7 @@ from scoretwin.benchmark import evaluate_synthetic
 from scoretwin.imaging import detect_staff_systems, estimate_global_skew_degrees, extract_notehead_candidates, refine_notehead_geometry, staff_step_and_pitch
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import analyze_array, process_file
-from scoretwin.proposal import predict_patch, train_proposal_model
+from scoretwin.proposal import load_model, predict_patch, save_model, train_proposal_model
 from scoretwin.synthetic import generate_synthetic_page
 
 
@@ -100,6 +100,16 @@ def test_synthetic_proposal_model_returns_normalized_probabilities():
     assert abs(sum(probs.values()) - 1.0) < 1e-5
     assert metrics["holdout_n"] >= 60
     assert 0.0 <= metrics["synthetic_holdout_accuracy"] <= 1.0
+
+
+def test_proposal_checkpoint_retains_reproducibility_metadata(tmp_path):
+    model, metrics = train_proposal_model(samples_per_class=30, epochs=8, seed=91)
+    model_path = tmp_path / "proposal.npz"
+    save_model(model, model_path)
+    restored = load_model(model_path)
+    assert restored["training_metrics"]["seed"] == 91
+    assert restored["training_metrics"]["train_n"] == metrics["train_n"]
+    assert restored["training_metrics"]["synthetic_holdout_accuracy"] == metrics["synthetic_holdout_accuracy"]
 
 
 def test_musicxml_is_well_formed_and_marks_uncertainty():

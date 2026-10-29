@@ -56,7 +56,7 @@ Then open http://127.0.0.1:8000. Uploaded files are processed by the local serve
 ## Output bundle
 
 - source file copied byte-for-byte to the bundle and verified by SHA-256;
-- scene.json: staff geometry, a primitive graph, typed relations, continuous pitch-position offsets, provenance and warnings;
+- scene.json: staff geometry, a primitive graph, typed relations, continuous pitch-position offsets, source provenance, software versions, model-training metadata and warnings;
 - overlay.png: source image with staff/notehead proposals;
 - geometry-render.png: structural render of the currently modeled primitives (not a complete/pixel-identical page render);
 - provisional.musicxml: XML output carrying explicit review markers.
