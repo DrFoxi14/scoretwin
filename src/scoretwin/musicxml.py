@@ -121,6 +121,7 @@ def build_musicxml(scene: dict) -> str:
                     + (" Chord membership was inferred geometrically and needs review." if is_chord_member else ""),
                     type="single",
                 )
+                previous_note = note
 
     xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
     return xml_bytes.decode("utf-8")
