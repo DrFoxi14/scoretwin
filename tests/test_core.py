@@ -8,7 +8,8 @@ import numpy as np
 
 from scoretwin.benchmark import evaluate_perspective_capture, evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
-from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
+from scoretwin.benchmark_photo_smoke import evaluate_photo_smoke
+from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
 from scoretwin.proposal import load_model, predict_patch, save_model, train_proposal_model
@@ -540,3 +541,47 @@ def test_perspective_capture_benchmark_keeps_pairs_and_reports_both_modes():
     assert len(report["capture_pairs"]) == 2
     assert len(report["capture_pairs"][0]["projective_raster_sha256"]) == 64
     assert len(report["capture_pairs"][0]["source_to_projective_homography"]) == 3
+
+
+def test_photo_smoke_reports_source_identity_without_claiming_accuracy(tmp_path):
+    gray, _truth = generate_synthetic_page(seed=34, staff_count=1, notes_per_staff=5)
+    image_path = tmp_path / "page.png"
+    assert cv2.imwrite(str(image_path), gray)
+    manifest_path = tmp_path / "photo-manifest.json"
+    manifest_path.write_text(__import__("json").dumps({
+        "schema": "scoretwin-photo-smoke-v1",
+        "pages": [{
+            "id": "smoke-page",
+            "image": image_path.name,
+            "capture_type": "synthetic",
+        }],
+    }), encoding="utf-8")
+
+    report = evaluate_photo_smoke(manifest_path)
+
+    assert report["pages_n"] == 1
+    assert report["pages_source_bytes_preserved_n"] == 1
+    assert report["data_status"] == "no_independent_symbolic_or_geometric_ground_truth"
+    assert report["claims_not_supported"]
+    assert "accuracy benchmark" in report["epistemic_status"]
+    assert "source_path" not in report["per_page"][0]
+    assert report["per_page"][0]["source_bytes_preserved"] is True
+
+
+def test_image_only_pdf_uses_native_page_raster_without_dpi_upsampling(tmp_path):
+    import fitz
+
+    gray, _truth = generate_synthetic_page(seed=42, staff_count=1, notes_per_staff=5)
+    ok, encoded = cv2.imencode(".png", gray)
+    assert ok
+    document = fitz.open()
+    page = document.new_page(width=gray.shape[1], height=gray.shape[0])
+    page.insert_image(page.rect, stream=encoded.tobytes())
+    pdf_path = tmp_path / "full-page-raster.pdf"
+    document.save(pdf_path)
+    document.close()
+
+    loaded = load_grayscale(pdf_path, page=0, dpi=300)
+
+    assert loaded.shape == gray.shape
+    assert np.array_equal(loaded, gray)
