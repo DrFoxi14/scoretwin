@@ -66,7 +66,7 @@ Add reviewed scene JSONs to score note geometry and typed relationship compariso
 
 The reference and candidate images must use the same dimensions, coordinate frame and decoded channel representation. With rectified scenes, compare the corresponding \`analysis-raster-pixels.png\` outputs, not the original unrectified photos. Optional masks can be added with \`--reference-mask\` and \`--candidate-mask\`. The report includes photometric exactness/MAE/MSE/PSNR, zlib residual-size bits per pixel, optional mask IoU/F1, center precision/recall/F1 and staff-space localization, pitch accuracy on labelled matches, and typed-relation F1. The zlib figure is a codec-specific residual-compressibility proxy, **not** a model-based MDL result.
 
-The report intentionally leaves \`aggregate_did\` unset. A weighted scalar must wait for a preregistered human-calibration study; choosing arbitrary weights would look quantitative while hiding an unvalidated value judgment.
+The report intentionally leaves \`aggregate_did\` unset. A weighted scalar must wait for a preregistered human-calibration study; choosing arbitrary weights would look quantitative while hiding an unvalidated value judgment. If masks are supplied, the same report also tests one-pixel dilation/erosion, blur-then-threshold, and deletion of the smallest disconnected foreground component. These are perturbation probes, not quality improvements. Removing one small component can leave global IoU deceptively high when the remaining ink dominates the union; object-level recall and photometric/boundary metrics are separate checks.
 
 Measure the actual artifact bundle size, excluding the byte-identical source copy so it cannot trivially "win" by embedding the input:
 
