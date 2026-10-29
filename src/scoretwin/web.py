@@ -13,7 +13,7 @@ from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 
 from .imaging import load_grayscale
-from .pipeline import analyze_array, render_overlay
+from .pipeline import analyze_array
 from .musicxml import build_musicxml
 from .proposal import get_default_model, load_model
 
@@ -33,8 +33,10 @@ button{background:#b7f36b;color:#151a12;font-weight:700;border:0;border-radius:9
 input{margin:12px 0}img{width:100%;height:auto;border-radius:8px;border:1px solid #303949}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#ced7e5}a{color:#b7f36b}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.editor-row{display:flex;gap:12px;align-items:center;justify-content:space-between;border-top:1px solid #303949;padding:10px 0}.editor-row select{background:#10131a;color:#edf0f6;padding:7px;border:1px solid #46536a;border-radius:7px}
-canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px solid #303949;touch-action:none}.status{padding:10px 0;font-weight:600}
-@media(max-width:700px){.grid{grid-template-columns:1fr}canvas{height:300px}}
+canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px solid #303949;touch-action:none}
+#pageCanvas{height:auto;display:block;background:#f4f4f4;cursor:crosshair}
+#scene3d{height:380px}.status{padding:10px 0;font-weight:600}
+@media(max-width:700px){.grid{grid-template-columns:1fr}canvas{height:300px}#pageCanvas{height:auto}#scene3d{height:300px}}
 </style>
 </head>
 <body>
@@ -46,7 +48,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 </div>
 <div id="results" hidden>
 <div class="grid">
-<section class="panel"><h2>2D overlay</h2><img id="overlay" alt="Detected staff and notehead proposals"></section>
+<section class="panel"><h2>2D geometry editor</h2><p class="muted">Drag a proposal box to adjust its geometry. This edits the reconstruction proposal, not the preserved source file.</p><canvas id="pageCanvas" width="1100" height="400" aria-label="Draggable notehead proposals over the source page"></canvas></section>
 <section class="panel"><h2>Scene summary</h2><pre id="summary"></pre><a id="download" download="provisional.musicxml">Download provisional MusicXML</a></section>
 </div>
 <section class="panel"><h2>3D semantic layer view</h2>
@@ -62,8 +64,41 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <section class="panel"><h2>Warnings</h2><pre id="warnings"></pre></section>
 </div>
 <script>
-let currentScene=null, yaw=-0.38, tilt=-0.2, dragging=false, lastX=0, lastY=0;
+let currentScene=null, yaw=-0.38, tilt=-0.2, dragging=false, draggingNote=-1, lastX=0, lastY=0;
 const canvas=document.getElementById('scene3d'),ctx=canvas.getContext('2d');
+const pageCanvas=document.getElementById('pageCanvas'),pageCtx=pageCanvas.getContext('2d');
+const sourcePreview=new Image();
+sourcePreview.onload=()=>{pageCanvas.width=sourcePreview.naturalWidth;pageCanvas.height=sourcePreview.naturalHeight;drawPage();};
+function pagePoint(event){
+ const rect=pageCanvas.getBoundingClientRect();
+ return [(event.clientX-rect.left)/rect.width*currentScene.image.width,
+         (event.clientY-rect.top)/rect.height*currentScene.image.height];
+}
+function updatePitchFromGeometry(note){
+ const staff=currentScene.staffs[note.staff_index];if(!staff)return;
+ const step=Math.round((staff.bottom-note.center[1])/(staff.spacing/2));
+ const letters=['C','D','E','F','G','A','B'],absoluteIndex=2+step;
+ const octaveDelta=Math.floor(absoluteIndex/7),letterIndex=((absoluteIndex%7)+7)%7;
+ note.diatonic_step_from_bottom_line=step;
+ if(!note.manually_edited_pitch)note.pitch={step:letters[letterIndex],octave:4+octaveDelta};
+}
+function drawPage(){
+ if(!currentScene||!sourcePreview.complete)return;
+ pageCtx.clearRect(0,0,pageCanvas.width,pageCanvas.height);
+ pageCtx.drawImage(sourcePreview,0,0,pageCanvas.width,pageCanvas.height);
+ const sx=pageCanvas.width/currentScene.image.width,sy=pageCanvas.height/currentScene.image.height;
+ currentScene.notes.forEach((note,index)=>{
+  const box=note.bbox,x=box[0]*sx,y=box[1]*sy,w=box[2]*sx,h=box[3]*sy;
+  pageCtx.strokeStyle=index===draggingNote?'#b7f36b':'#e56f79';pageCtx.lineWidth=Math.max(1.4,pageCanvas.width/900);
+  pageCtx.strokeRect(x,y,w,h);
+  pageCtx.fillStyle='#e56f79';pageCtx.font=(Math.max(10,pageCanvas.width/100))+'px system-ui';
+  pageCtx.fillText(note.pitch.step+note.pitch.octave+'?',x,y-3<10?y+h+12:y-3);
+ });
+ currentScene.unknown_objects.forEach(item=>{
+  const x=item.bbox[0]*sx,y=item.bbox[1]*sy,w=item.bbox[2]*sx,h=item.bbox[3]*sy;
+  pageCtx.strokeStyle='#e3b35b';pageCtx.lineWidth=1;pageCtx.strokeRect(x,y,w,h);
+ });
+}
 function rotatePoint(x,y,z){
  const cy=Math.cos(yaw),sy=Math.sin(yaw),cx=Math.cos(tilt),sx=Math.sin(tilt);
  const xx=x*cy-z*sy,zz=x*sy+z*cy;
@@ -125,8 +160,8 @@ function buildEditor(){
    const match=select.value.match(/^([A-G])([2-7])$/);if(!match)return;
    currentScene.notes[index].pitch={step:match[1],octave:Number(match[2])};
    currentScene.notes[index].uncertainty=currentScene.notes[index].uncertainty||[];
-   currentScene.notes[index].manually_edited=true;
-   draw3d();
+   currentScene.notes[index].manually_edited_pitch=true;
+   draw3d();drawPage();
   });
   row.append(title,select);holder.appendChild(row);
  });
@@ -140,7 +175,7 @@ form.addEventListener('submit',async(event)=>{
   const response=await fetch('/api/analyze',{method:'POST',body});const result=await response.json();
   if(!response.ok)throw new Error(result.detail||'Analysis failed');
   currentScene=result.scene;
-  document.getElementById('overlay').src='data:image/png;base64,'+result.overlay_png_base64;
+  sourcePreview.src='data:image/png;base64,'+result.source_preview_png_base64;
   document.getElementById('summary').textContent=JSON.stringify(result.summary,null,2);
   document.getElementById('warnings').textContent=result.warnings.join('\n');
   setDownload(result.musicxml);document.getElementById('results').hidden=false;
@@ -169,7 +204,28 @@ document.getElementById('export-edits').addEventListener('click',async()=>{
  }catch(error){document.getElementById('status').textContent=error.message||String(error);}
  finally{button.disabled=false;}
 });
-window.addEventListener('resize',draw3d);
+pageCanvas.addEventListener('pointerdown',event=>{
+ if(!currentScene)return;
+ const point=pagePoint(event);
+ for(let i=currentScene.notes.length-1;i>=0;i--){
+  const note=currentScene.notes[i],b=note.bbox,pad=currentScene.staffs[note.staff_index]?.spacing*0.35||4;
+  if(point[0]>=b[0]-pad&&point[0]<=b[0]+b[2]+pad&&point[1]>=b[1]-pad&&point[1]<=b[1]+b[3]+pad){
+   draggingNote=i;pageCanvas.setPointerCapture(event.pointerId);drawPage();return;
+  }
+ }
+});
+pageCanvas.addEventListener('pointermove',event=>{
+ if(draggingNote<0||!currentScene)return;
+ const point=pagePoint(event),note=currentScene.notes[draggingNote];
+ note.center=[Math.max(0,Math.min(currentScene.image.width-1,point[0])),Math.max(0,Math.min(currentScene.image.height-1,point[1]))];
+ const b=note.bbox;note.bbox=[Math.round(note.center[0]-b[2]/2),Math.round(note.center[1]-b[3]/2),b[2],b[3]];
+ note.manually_edited_geometry=true;updatePitchFromGeometry(note);drawPage();draw3d();
+});
+pageCanvas.addEventListener('pointerup',()=>{
+ if(draggingNote>=0){draggingNote=-1;buildEditor();drawPage();document.getElementById('status').textContent='Geometry proposal updated. The original source hash and bytes are unchanged.';}
+});
+pageCanvas.addEventListener('pointercancel',()=>{draggingNote=-1;drawPage();});
+window.addEventListener('resize',()=>{draw3d();drawPage();});
 </script>
 </body></html>"""
 
@@ -197,10 +253,18 @@ async def analyze(file: UploadFile = File(...)) -> dict:
             gray = load_grayscale(input_path)
             model = load_model(MODEL_PATH) if MODEL_PATH and Path(MODEL_PATH).exists() else get_default_model()
             scene = analyze_array(gray, model=model)
-            overlay = render_overlay(gray, scene)
-            success, encoded = cv2.imencode(".png", overlay)
+            preview = gray
+            preview_scale = min(1.0, 1600.0 / max(gray.shape[1], gray.shape[0]))
+            if preview_scale < 1.0:
+                preview = cv2.resize(
+                    gray,
+                    (max(1, int(round(gray.shape[1] * preview_scale))),
+                     max(1, int(round(gray.shape[0] * preview_scale)))),
+                    interpolation=cv2.INTER_AREA,
+                )
+            success, encoded = cv2.imencode(".png", preview)
             if not success:
-                raise RuntimeError("Overlay encoding failed.")
+                raise RuntimeError("Preview encoding failed.")
             xml = build_musicxml(scene)
             return {
                 "summary": {
@@ -216,7 +280,7 @@ async def analyze(file: UploadFile = File(...)) -> dict:
                 "warnings": scene["warnings"],
                 "scene": scene,
                 "musicxml": xml,
-                "overlay_png_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
+                "source_preview_png_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
             }
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
