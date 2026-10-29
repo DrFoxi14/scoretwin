@@ -84,8 +84,28 @@ def build_musicxml(scene: dict) -> str:
             if measure_index == 0:
                 _add_attributes(measure)
 
-            for note in groups.get(measure_index, []):
+            measure_notes = sorted(groups.get(measure_index, []), key=lambda item: item["center"][0])
+            previous_note: dict | None = None
+            for note in measure_notes:
                 xml_note = _sub(measure, "note", id=str(note["id"]))
+                is_chord_member = False
+                if previous_note is not None:
+                    x_gap = abs(float(note["center"][0]) - float(previous_note["center"][0]))
+                    y_gap = abs(float(note["center"][1]) - float(previous_note["center"][1]))
+                    vertical_pitch_diff = (
+                        note["pitch"]["step"] != previous_note["pitch"]["step"]
+                        or int(note["pitch"]["octave"]) != int(previous_note["pitch"]["octave"])
+                    )
+                    # Stack noteheads with near-identical x and distinct vertical pitches
+                    # are exported as a chord hypothesis. This geometric threshold is
+                    # provisional and must be reviewed for dense or handwritten scores.
+                    is_chord_member = bool(
+                        x_gap <= max(2.0, 0.32 * float(staff.get("spacing", 12.0)))
+                        and y_gap >= 0.38 * float(staff.get("spacing", 12.0))
+                        and vertical_pitch_diff
+                    )
+                if is_chord_member:
+                    _sub(xml_note, "chord")
                 pitch = _sub(xml_note, "pitch")
                 _sub(pitch, "step", note["pitch"]["step"])
                 _sub(pitch, "octave", note["pitch"]["octave"])
@@ -97,7 +117,8 @@ def build_musicxml(scene: dict) -> str:
                 _sub(
                     notations,
                     "other-notation",
-                    "IDSR_REVIEW: duration, accidental, voice and note-to-measure assignment are provisional.",
+                    "IDSR_REVIEW: duration, accidental, voice and note-to-measure assignment are provisional."
+                    + (" Chord membership was inferred geometrically and needs review." if is_chord_member else ""),
                     type="single",
                 )
 
