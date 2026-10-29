@@ -455,7 +455,8 @@ def rectify_page_quadrilateral(
 
     # Ordered TL, TR, BR, BL points must form a strictly convex quadrilateral.
     edges = np.roll(source, -1, axis=0) - source
-    cross_products = np.cross(edges, np.roll(edges, -1, axis=0))
+    next_edges = np.roll(edges, -1, axis=0)
+    cross_products = edges[:, 0] * next_edges[:, 1] - edges[:, 1] * next_edges[:, 0]
     if np.any(cross_products <= 1e-6):
         raise ValueError("Corners must form a clockwise, strictly convex quadrilateral in TL, TR, BR, BL order.")
     area = 0.5 * abs(float(np.dot(source[:, 0], np.roll(source[:, 1], -1))
