@@ -112,7 +112,7 @@ Run the browser app:
 
     scoretwin serve --host 127.0.0.1 --port 8000
 
-Then open http://127.0.0.1:8000. Uploaded files are processed by the local server process. No remote inference API is used by this prototype. On an image, **Select four page corners** enables a clockwise tap sequence from top-left through bottom-left; analysis applies the corresponding planar homography and records its inverse. This is optional and does not flatten a curled page. After edits, use **Download edited scene JSON** to keep the adjusted geometry and pitch proposals; **Regenerate MusicXML from edits** exports the current symbolic projection.
+Then open http://127.0.0.1:8000. Uploaded files are processed by the local server process. No remote inference API is used by this prototype. The browser displays capture-quality diagnostics after analysis: dynamic range, a normalized Laplacian sharpness heuristic, background illumination variation, and specific retake suggestions. These thresholds are marked uncalibrated; a good quality report does not prove the score was understood, and a warning does not automatically reject the capture. On an image, **Select four page corners** enables a clockwise tap sequence from top-left through bottom-left; analysis applies the corresponding planar homography and records its inverse. This is optional and does not flatten a curled page. After edits, use **Download edited scene JSON** to keep the adjusted geometry and pitch proposals; **Regenerate MusicXML from edits** exports the current symbolic projection.
 
 ## Output bundle
 
