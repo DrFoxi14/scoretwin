@@ -179,3 +179,8 @@ def get_default_model() -> dict:
     if _DEFAULT_MODEL is None:
         _DEFAULT_MODEL, _ = train_proposal_model(samples_per_class=120, epochs=24, seed=19)
     return _DEFAULT_MODEL
+
+
+def get_default_model_metrics() -> dict:
+    """Return training metadata saved with the cached synthetic patch model."""
+    return dict(get_default_model().get("training_metrics", {}))

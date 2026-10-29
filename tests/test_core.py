@@ -177,6 +177,42 @@ def test_musicxml_is_well_formed_and_marks_uncertainty():
     assert "IDSR_REVIEW" in root.find(".//other-notation").text
 
 
+def test_musicxml_serializes_annotated_chords_voices_accidentals_and_systems():
+    staffs = [
+        {"part_id": "piano", "part_name": "Piano", "system_index": 0, "staff_number": 1,
+         "lines": [10, 20, 30, 40, 50], "barlines": [], "clef": {"sign": "G", "line": 2}},
+        {"part_id": "piano", "part_name": "Piano", "system_index": 0, "staff_number": 2,
+         "lines": [70, 80, 90, 100, 110], "barlines": [], "clef": {"sign": "F", "line": 4}},
+        {"part_id": "piano", "part_name": "Piano", "system_index": 1, "staff_number": 1,
+         "lines": [140, 150, 160, 170, 180], "barlines": [], "clef": {"sign": "G", "line": 2}},
+        {"part_id": "piano", "part_name": "Piano", "system_index": 1, "staff_number": 2,
+         "lines": [200, 210, 220, 230, 240], "barlines": [], "clef": {"sign": "F", "line": 4}},
+    ]
+    notes = [
+        {"id": "n1", "staff_index": 0, "center": [50, 40], "pitch": {"step": "D", "octave": 4},
+         "voice": 1, "onset": 0, "duration": 2, "chord_id": "c1", "uncertainty": []},
+        {"id": "n2", "staff_index": 0, "center": [50, 30], "pitch": {"step": "F", "octave": 4, "alter": 1},
+         "accidental": "sharp", "voice": 1, "onset": 0, "duration": 2, "chord_id": "c1", "uncertainty": []},
+        {"id": "n3", "staff_index": 1, "center": [50, 100], "pitch": {"step": "C", "octave": 3},
+         "voice": 2, "onset": 0, "duration": 4, "uncertainty": []},
+        {"id": "n4", "staff_index": 2, "center": [50, 170], "pitch": {"step": "E", "octave": 4},
+         "voice": 1, "onset": 0, "duration": 1, "measure_index": 0, "uncertainty": []},
+    ]
+    root = ET.fromstring(build_musicxml({"staffs": staffs, "notes": notes}))
+    parts = root.findall("./part")
+    measures = parts[0].findall("./measure")
+    assert len(parts) == 1
+    assert len(measures) == 2
+    assert measures[0].find("./attributes/staves").text == "2"
+    assert measures[1].find("./print").attrib["new-system"] == "yes"
+    assert len(measures[0].findall("./note/chord")) == 1
+    assert measures[0].find(".//pitch/alter").text == "1"
+    assert measures[0].find(".//accidental").text == "sharp"
+    assert {item.text for item in measures[0].findall("./note/voice")} == {"1", "2"}
+    assert any(item.text == "2" for item in measures[0].findall("./note/staff"))
+    assert measures[0].find("./backup/duration").text == "2"
+
+
 def test_musicxml_exports_stacked_noteheads_as_review_chords():
     scene = {
         "staffs": [{"lines": [10, 20, 30, 40, 50], "spacing": 10, "barlines": []}],
@@ -308,13 +344,46 @@ def test_annotated_manifest_evaluator_reports_page_bootstrap_intervals(tmp_path)
     assert result["per_page"][0]["image_sha256"]
     assert "mean_center_error_staff_spaces" in result["per_page"][0]
     assert result["software"]["opencv"] == cv2.__version__
+    assert result["mean_center_error_staff_spaces"] is not None
+    assert result["p95_center_error_staff_spaces"] is not None
+    intervals = result["precision_recall_f1_bootstrap_95_ci"]
+    assert intervals["mean_center_error_sp"]["lower_95"] is not None
+    assert intervals["p95_center_error_sp"]["upper_95"] is not None
+    assert result["per_page"][0]["p95_center_error_staff_spaces"] is not None
+
+
+def test_scene_graph_records_geometry_provenance_and_pitch_calibration():
+    gray, _truth = generate_synthetic_page(seed=28, staff_count=1, notes_per_staff=5)
+    original = gray.copy()
+    scene = analyze_array(gray)
+    kinds = {primitive["kind"] for primitive in scene["primitives"]}
+    assert scene["schema"] == "scoretwin-scene-0.1"
+    assert {"staff_system", "staffline", "notehead"}.issubset(kinds)
+    assert any(relation["type"] == "pitch_calibrated_by" for relation in scene["relations"])
+    assert all("provenance" in primitive and "uncertainty" in primitive for primitive in scene["primitives"])
+    assert scene["reproducibility"]["software"]["scoretwin"]
+    assert scene["reproducibility"]["proposal_model"]["training_metrics"]["seed"] == 19
+    assert np.array_equal(gray, original)
 
 
 def test_synthetic_benchmark_schema_is_reproducible():
-    report = evaluate_synthetic(pages=1, seed=44, staff_count=1, notes_per_staff=5)
-    assert report["benchmark"] == "synthetic-notehead-proposal-v1"
-    assert report["n_ground_truth"] == 5
-    assert report["pages"] == 1
-    assert 0.0 <= report["precision"] <= 1.0
-    assert 0.0 <= report["recall"] <= 1.0
-    assert len(report["per_page"]) == 1
+    report = evaluate_synthetic(
+        pages=3,
+        seed=44,
+        staff_count=1,
+        notes_per_staff=5,
+        noise_sigma=2.0,
+        blur_sigma=0.35,
+    )
+    assert report["benchmark"] == "synthetic-notehead-proposal-v2"
+    assert report["measurements"]["n_ground_truth_noteheads"] == 15
+    assert report["protocol"]["pages"] == 3
+    assert report["protocol"]["matching_tolerance_staff_spaces"] == 0.3
+    assert 0.0 <= report["measurements"]["micro_precision"] <= 1.0
+    assert 0.0 <= report["measurements"]["micro_recall"] <= 1.0
+    assert len(report["measurements"]["macro_page_f1_ci95_bootstrap"]) == 2
+    assert len(report["per_page"]) == 3
+    assert all("p95_center_error_staff_spaces" in row for row in report["per_page"])
+    assert isinstance(report["runtime_environment"]["runtime_meets_all_project_requirements"], bool)
+    assert report["software"]["scoretwin"]
+    assert report["proposal_model_training_metrics"]["seed"] == 19

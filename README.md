@@ -13,6 +13,7 @@ This repository contains a runnable research prototype:
 - a provenance-aware geometry graph (staff systems, staff lines, barlines, notehead proposals, unknown regions and typed relations) with pixel coordinates and uncertainty flags;
 - a source-aligned 2D editor for dragging notehead proposals, a separate structural 2D render of known primitives, and an interactive semantic-layer view in 3D;
 - editable pitch proposals, downloadable scene JSON and provisional MusicXML export, with uncertain durations and score structure marked for review;
+- MusicXML serialization for explicitly annotated chord groups, voices, accidentals and repeated systems; those fields remain unrecognized from pixels;
 - a local browser UI, CLI, synthetic-page generator and synthetic regression benchmark;
 - tests and a GitHub Actions workflow.
 
@@ -33,7 +34,7 @@ Create and analyze a synthetic example (a useful first smoke test):
 
 Evaluate notehead proposals on generated pages, with exact synthetic notehead-center ground truth:
 
-    scoretwin evaluate-synthetic --pages 16 --seed 20261029 --out ./results/synthetic-evaluation.json
+    scoretwin evaluate-synthetic --pages 100 --seed 20261029 --noise-sigma 2 --blur-sigma 0.35 --contract-staff-spaces 0.3 --out ./results/synthetic-capture-pilot-2026-10-29.json
 
 Evaluate a separately annotated manifest (the command does not manufacture ground truth):
 
@@ -69,12 +70,26 @@ Unresolved regions include a heuristic reason such as low local contrast, low lo
 
 The preserved source is the lossless identity anchor. The overlay is a diagnostic layer, not a claim that all original ink has been parsed into primitives. The 3D view uses a semantic layer offset; it is not a measurement of the physical relief of ink.
 
+For hand-annotated scene JSON, MusicXML export accepts note fields `chord_id`, `voice`, `onset`, `duration`, `type`, `accidental`, and `pitch.alter`. Staffs can share `part_id` and specify `part_name`, `system_index`, `staff_number`, `key_fifths`, `time_signature`, and `clef`; notes can override `system_index` or set `measure_index`. `onset` and `duration` use MusicXML divisions (the current default is one division per quarter note). The exporter serializes supplied annotations, adds review-marked geometric chord hypotheses, and keeps unresolved fields flagged; it does not infer voices or accidentals.
+
 ## Epistemic status
 
 - [DEMONSTRATED BY CONSTRUCTION] The original uploaded file is copied byte-for-byte and hash-checked in CLI bundles.
 - [MEASURED BY TESTS] Staff detection, staff-line-crossing notehead proposal, synthetic classifier execution, local template-fit refinement, scene-graph creation, MusicXML XML parsing and bundle generation are checked by tests.
 - [HYPOTHESIS] The synthetic patch classifier and geometric proposals will transfer to real score photographs. This must be tested on a held-out, real-page benchmark.
 - [NOT YET IMPLEMENTED] End-to-end recovery of complete symbolic-geometric scenes from arbitrary photographs, calibrated symbolic ambiguity, physically measured ink depth and validated DID/MDL metrics.
+
+## Synthetic capture pilot
+
+[MĂSURAT — synthetic only] The checked-in run evaluated 100 procedurally generated pages (1,800 ground-truth noteheads), seeds 20261029–20261128, two staffs per page, 9 notes per staff, grayscale noise σ=2 and Gaussian blur σ=0.35 px. Geometry remained registered; there was no perspective, rotation, color ISP, page curvature or real manuscript. The patch classifier used 360 synthetic training crops and 90 synthetic holdout crops.
+
+[MĂSURAT — synthetic only] After local template-fit refinement, matching at 0.3 staff spaces produced 1,790 true positives, 2 false positives and 10 false negatives: micro precision 0.9989, recall 0.9944 and F1 0.9967. Macro page F1 was 0.9966 (page-bootstrap 95% CI 0.9939–0.9988). Mean page p95 localization error was 0.0778 staff spaces (95% CI 0.0735–0.0820); all 100 pages met the ≤0.3-space localization threshold (Wilson 95% CI 96.3%–100%). The combined gate F1 ≥0.95 and p95 ≤0.3 spaces passed on 96/100 pages (Wilson 95% CI 90.2%–98.4%). The p95 is conditional on matched noteheads; precision/recall separately account for misses and extras. The patch classifier scored 0.9556 on 90 synthetic holdout crops; that is crop classification accuracy, not page-level note detection. See [the full report](results/synthetic-capture-pilot-2026-10-29.json) for per-page data, model hash, versions and hardware.
+
+[MĂSURAT] This is a synthetic-only result, not a real-photo benchmark or the IDSR DID metric. The image pipeline does not infer voices, accidentals, durations or staff-to-part mapping.
+
+[IPOTEZĂ] The synthetic proposal and refinement may transfer to registered score photographs. A falsifying test is a held-out set of real photographs with independently prepared notehead-center annotations and per-page precision, recall, F1 and staff-space localization confidence intervals.
+
+[MĂSURAT] The run used Python 3.9.6, NumPy 1.22.0 and OpenCV 5.0.0. The project requires Python ≥3.11, NumPy ≥1.26 and OpenCV ≥4.9,<5; the JSON records that this environment does not meet those constraints. Treat the result and latency as exploratory until rerun on supported dependencies and confirmed by CI.
 
 ## Next gates
 
@@ -87,11 +102,11 @@ The preserved source is the lossless identity anchor. The overlay is a diagnosti
 
 ## External annotated-page manifest
 
-To evaluate real photographs, create a JSON file with schema \`scoretwin-annotated-pages-v1\`. Every image entry needs an image path relative to the manifest and a \`notes\` array whose items include \`center: [x, y]\` in the rasterized image coordinate frame and \`staff_index\` numbered from top to bottom. A \`pitch\` object can optionally contain \`step\` and \`octave\`; \`staff_spacing_px\` is strongly recommended. An optional SHA-256 is checked against the original file.
+To evaluate real photographs, create a JSON file with schema `scoretwin-annotated-pages-v1`. Every image entry needs an image path relative to the manifest and a `notes` array whose items include `center: [x, y]` in the rasterized image coordinate frame and `staff_index` numbered from top to bottom. A `pitch` object can optionally contain `step` and `octave`; `staff_spacing_px` is strongly recommended. An optional SHA-256 is checked against the original file.
 
 Example:
 
-\`\`\`json
+```json
 {
   "schema": "scoretwin-annotated-pages-v1",
   "pages": [{
@@ -103,6 +118,6 @@ Example:
     ]
   }]
 }
-\`\`\`
+```
 
 The report includes per-page counts, precision/recall/F1, center error in pixels and staff spaces, pitch accuracy when labelled, and page-bootstrap 95% intervals for detection and normalized geometry error. These intervals describe variation across the supplied pages; they do not repair bias from a small or unrepresentative sample. Do not call this a real-photo benchmark unless the manifest actually references real photos with independently prepared annotations.

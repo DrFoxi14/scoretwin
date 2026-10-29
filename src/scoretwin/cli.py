@@ -42,6 +42,10 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--seed", type=int, default=20261029)
     benchmark.add_argument("--staff-count", type=int, default=2)
     benchmark.add_argument("--notes-per-staff", type=int, default=9)
+    benchmark.add_argument("--noise-sigma", type=float, default=0.0)
+    benchmark.add_argument("--blur-sigma", type=float, default=0.0)
+    benchmark.add_argument("--contract-staff-spaces", type=float, default=0.3)
+    benchmark.add_argument("--bootstrap-rounds", type=int, default=2000)
     benchmark.add_argument("--out", type=Path, default=Path("synthetic-evaluation.json"))
 
     manifest = commands.add_parser("evaluate-manifest", help="Evaluate notehead proposals on annotated external pages")
@@ -99,6 +103,10 @@ def main() -> None:
             seed=args.seed,
             staff_count=args.staff_count,
             notes_per_staff=args.notes_per_staff,
+            noise_sigma=args.noise_sigma,
+            blur_sigma=args.blur_sigma,
+            contract_staff_spaces=args.contract_staff_spaces,
+            bootstrap_rounds=args.bootstrap_rounds,
         )
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")

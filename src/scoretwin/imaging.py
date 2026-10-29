@@ -99,7 +99,9 @@ def estimate_global_skew_degrees(gray: np.ndarray) -> float | None:
 
     observations: list[tuple[float, float]] = []
     min_length = scaled_width * 0.12
-    for line in lines[:, 0, :]:
+    # OpenCV versions return Hough line arrays either as (N, 1, 4) or (N, 4).
+    # Normalize the layout before iterating so both supported Python builds work.
+    for line in np.asarray(lines).reshape(-1, 4):
         x0, y0, x1, y1 = [int(value) for value in line]
         dx, dy = x1 - x0, y1 - y0
         length = float(np.hypot(dx, dy))
