@@ -384,6 +384,8 @@ def test_human_calibration_reports_rank_correlation_kappa_and_repeat_consistency
     assert report["independence_group_count"] == 30
     assert report["rater_count"] == 5
     assert report["total_rating_count"] == 165
+    assert report["metric_human_associations"]["mask_iou"]["n_pairs"] == 30
+    assert report["metric_human_associations"]["center_error_sp"]["n_pairs"] == 30
     assert report["metric_human_associations"]["mask_iou"]["spearman_rho"] == pytest.approx(1.0)
     assert report["metric_human_associations"]["center_error_sp"]["spearman_rho"] == pytest.approx(1.0)
     assert report["metric_human_associations"]["mask_iou"]["bootstrap_95_ci"]["bootstrap_samples_requested"] == 100
