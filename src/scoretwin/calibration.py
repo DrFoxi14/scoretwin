@@ -8,6 +8,7 @@ rank correlations and page/source-cluster bootstrap intervals from supplied rati
 from __future__ import annotations
 
 import math
+from statistics import NormalDist
 from typing import Any
 
 import numpy as np
@@ -223,8 +224,9 @@ def recommended_study_design(target_rho: float = 0.4, alpha: float = 0.05, power
     if not 0 < target_rho < 1 or not 0 < alpha < 1 or not 0 < power < 1:
         raise ValueError("target_rho, alpha and power must be within (0,1).")
     # Standard normal approximations for two-sided alpha and desired power.
-    z_alpha = 1.959963984540054 if abs(alpha - 0.05) < 1e-10 else 1.959963984540054
-    z_power = 0.8416212335729143 if abs(power - 0.8) < 1e-10 else 0.8416212335729143
+    normal = NormalDist()
+    z_alpha = normal.inv_cdf(1.0 - alpha / 2.0)
+    z_power = normal.inv_cdf(power)
     required = int(math.ceil(((z_alpha + z_power) / math.atanh(target_rho)) ** 2 + 3))
     return {
         "approximate_independent_pairs_for_target_spearman_rho": required,
