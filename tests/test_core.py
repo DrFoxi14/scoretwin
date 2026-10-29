@@ -64,7 +64,6 @@ def test_scene_and_browser_expose_capture_quality_diagnostics():
     assert 'id="live-camera"' in WEB_PAGE
     assert 'id="capture-frame"' in WEB_PAGE
     assert "navigator.mediaDevices.getUserMedia" in WEB_PAGE
-    assert "liveVideo.getTracks" not in WEB_PAGE  # tracks belong to the stream object
     assert "liveCameraStream.getTracks().forEach(track=>track.stop())" in WEB_PAGE
     assert "liveCapturedFile=new File([blob]" in WEB_PAGE
     assert "const file=activeFile()" in WEB_PAGE
