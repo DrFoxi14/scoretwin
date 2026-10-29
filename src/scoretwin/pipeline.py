@@ -92,7 +92,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
                 "center": item["center"],
                 "class": item["class"],
                 "confidence": item["confidence"],
-                "reason": "Candidate was not confidently classified as a notehead.",
+                "reason": "Candidate was not classified as either modeled notehead type; it may be non-note ink or an unresolved symbol.",
             })
 
     # Build a provenance-aware scene graph in observed pixel coordinates.
@@ -189,8 +189,14 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
                 "duration": None,
             },
             "provenance": {
-                "method": "component_geometry_plus_synthetic_patch_classifier",
+                "method": "component_geometry_plus_synthetic_patch_classifier_plus_local_template_fit",
                 "classifier_confidence": float(note["pitch_confidence"]),
+                "geometry_fit_score": (
+                    note.get("geometry_refinement") or {}
+                ).get("fit_score"),
+                "geometry_fit_accepted": bool(
+                    (note.get("geometry_refinement") or {}).get("accepted", False)
+                ),
                 "status": "proposal",
             },
             "uncertainty": list(note["uncertainty"]),
