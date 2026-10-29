@@ -49,7 +49,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <div id="results" hidden>
 <div class="grid">
 <section class="panel"><h2>2D geometry editor</h2><p class="muted">Drag a proposal box to adjust its geometry. This edits the reconstruction proposal, not the preserved source file.</p><canvas id="pageCanvas" width="1100" height="400" aria-label="Draggable notehead proposals over the source page"></canvas></section>
-<section class="panel"><h2>Scene summary</h2><pre id="summary"></pre><a id="download" download="provisional.musicxml">Download provisional MusicXML</a></section>
+<section class="panel"><h2>Scene summary</h2><pre id="summary"></pre><div><a id="download" download="provisional.musicxml">Download provisional MusicXML</a></div><button id="export-scene" type="button">Download edited scene JSON</button></section>
 </div>
 <section class="panel"><h2>3D semantic layer view</h2>
 <p class="muted">Drag to rotate. The layer offset is a visualization convention, not measured physical ink depth.</p>
@@ -175,6 +175,7 @@ form.addEventListener('submit',async(event)=>{
   const response=await fetch('/api/analyze',{method:'POST',body});const result=await response.json();
   if(!response.ok)throw new Error(result.detail||'Analysis failed');
   currentScene=result.scene;
+  currentScene.source=result.source;
   sourcePreview.src='data:image/png;base64,'+result.source_preview_png_base64;
   document.getElementById('summary').textContent=JSON.stringify(result.summary,null,2);
   document.getElementById('warnings').textContent=result.warnings.join('\n');
@@ -194,6 +195,12 @@ document.getElementById('reset-view').addEventListener('click',()=>{yaw=-0.38;ti
 canvas.addEventListener('pointerdown',event=>{dragging=true;lastX=event.clientX;lastY=event.clientY;canvas.setPointerCapture(event.pointerId);});
 canvas.addEventListener('pointermove',event=>{if(!dragging)return;yaw+=(event.clientX-lastX)*0.008;tilt+=(event.clientY-lastY)*0.008;tilt=Math.max(-1.2,Math.min(1.2,tilt));lastX=event.clientX;lastY=event.clientY;draw3d();});
 canvas.addEventListener('pointerup',()=>{dragging=false;});canvas.addEventListener('pointercancel',()=>{dragging=false;});
+document.getElementById('export-scene').addEventListener('click',()=>{
+ if(!currentScene)return;
+ const blob=new Blob([JSON.stringify(currentScene,null,2)],{type:'application/json'});
+ const url=URL.createObjectURL(blob),anchor=document.createElement('a');
+ anchor.href=url;anchor.download='scoretwin-edited-scene.json';anchor.click();URL.revokeObjectURL(url);
+});
 document.getElementById('export-edits').addEventListener('click',async()=>{
  if(!currentScene)return;
  const button=document.getElementById('export-edits');button.disabled=true;
@@ -253,6 +260,14 @@ async def analyze(file: UploadFile = File(...)) -> dict:
             gray = load_grayscale(input_path)
             model = load_model(MODEL_PATH) if MODEL_PATH and Path(MODEL_PATH).exists() else get_default_model()
             scene = analyze_array(gray, model=model)
+            source_sha256 = hashlib.sha256(contents).hexdigest()
+            scene["source"] = {
+                "filename": filename,
+                "sha256": source_sha256,
+                "bytes": len(contents),
+                "page_index": 0 if suffix == ".pdf" else None,
+                "server_persisted": False,
+            }
             preview = gray
             preview_scale = min(1.0, 1600.0 / max(gray.shape[1], gray.shape[0]))
             if preview_scale < 1.0:
@@ -269,7 +284,7 @@ async def analyze(file: UploadFile = File(...)) -> dict:
             return {
                 "summary": {
                     "filename": filename,
-                    "source_sha256": hashlib.sha256(contents).hexdigest(),
+                    "source_sha256": source_sha256,
                     "width": scene["image"]["width"],
                     "height": scene["image"]["height"],
                     "staff_count": len(scene["staffs"]),
@@ -278,6 +293,7 @@ async def analyze(file: UploadFile = File(...)) -> dict:
                     "runtime_seconds": scene["runtime_seconds"],
                 },
                 "warnings": scene["warnings"],
+                "source": scene["source"],
                 "scene": scene,
                 "musicxml": xml,
                 "source_preview_png_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
