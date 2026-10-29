@@ -7,11 +7,13 @@ import xml.etree.ElementTree as ET
 
 import cv2
 import numpy as np
+import pytest
 
 from scoretwin.benchmark import evaluate_perspective_capture, evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
 from scoretwin.benchmark_photo_smoke import evaluate_photo_smoke
 from scoretwin.gltf_export import build_gltf, validate_embedded_gltf
+from scoretwin.metrics import binary_mask_metrics, compare_idsr_components, geometry_metrics, photometric_metrics, relation_metrics, residual_compressibility_metrics
 from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
@@ -341,6 +343,76 @@ def test_musicxml_duration_hypothesis_is_not_mistaken_for_exported_duration():
 def test_empty_scene_still_has_a_measure():
     root = ET.fromstring(build_musicxml({"staffs": [], "notes": []}))
     assert root.find("./part/measure") is not None
+
+
+def test_component_metrics_report_exact_photo_geometry_masks_and_relations():
+    reference = np.full((40, 60, 3), 255, dtype=np.uint8)
+    reference[10:13, 5:45] = [0, 0, 0]
+    candidate = reference.copy()
+
+    photo = photometric_metrics(reference, candidate)
+    assert photo["exact_pixel_fraction"] == 1.0
+    assert photo["mismatched_pixel_count"] == 0
+    assert photo["maximum_absolute_channel_error"] == 0
+    assert photo["psnr_db"] is None
+    assert photo["psnr_infinite_for_exact_match"] is True
+
+    compression = residual_compressibility_metrics(reference, candidate)
+    assert compression["residual_raw_bytes"] == reference.size * 2
+    assert compression["residual_zlib_bits_per_pixel"] < compression["residual_raw_bits_per_pixel"]
+
+    geometry = geometry_metrics(
+        [
+            {"id": "r1", "staff_index": 0, "center": [10.0, 20.0], "pitch": {"step": "E", "octave": 4}},
+            {"id": "r2", "staff_index": 0, "center": [30.0, 20.0], "pitch": {"step": "G", "octave": 4}},
+        ],
+        [
+            {"id": "p1", "staff_index": 0, "center": [11.0, 20.0], "pitch": {"step": "E", "octave": 4}},
+            {"id": "extra", "staff_index": 0, "center": [50.0, 20.0], "pitch": {"step": "C", "octave": 5}},
+        ],
+        staff_space_px=10.0,
+        tolerance_staff_spaces=0.3,
+    )
+    assert geometry["true_positive"] == 1
+    assert geometry["false_positive"] == 1
+    assert geometry["false_negative"] == 1
+    assert geometry["f1"] == 0.5
+    assert geometry["matched_center_error_mean_staff_spaces"] == 0.1
+    assert geometry["matched_symbol_pitch_accuracy"]["accuracy"] == 1.0
+
+    relation_result = relation_metrics(
+        [{"type": "member_of", "source": "a", "target": "s"}],
+        [{"type": "member_of", "source": "a", "target": "s"},
+         {"type": "stem_of", "source": "b", "target": "a"}],
+    )
+    assert relation_result["true_positive"] == 1
+    assert relation_result["false_positive"] == 1
+    assert relation_result["f1"] == pytest.approx(2 / 3)
+
+    mask_ref = np.zeros((20, 20), dtype=np.uint8)
+    mask_ref[4:12, 3:10] = 255
+    mask_candidate = mask_ref.copy()
+    mask_candidate[15, 15] = 255
+    mask_result = binary_mask_metrics(mask_ref, mask_candidate)
+    assert mask_result["iou"] < 1.0
+    assert mask_result["f1"] < 1.0
+
+    report = compare_idsr_components(reference, candidate, reference_mask=mask_ref, candidate_mask=mask_ref)
+    assert report["aggregate_did"] is None
+    assert "weights require preregistered calibration" in report["aggregate_did_status"]
+    assert report["metrics"]["photometric"]["exact_pixel_fraction"] == 1.0
+
+
+def test_component_metrics_reject_shape_mismatch_and_uncalibrated_geometry():
+    with pytest.raises(ValueError, match="shapes must match"):
+        photometric_metrics(np.zeros((8, 8), dtype=np.uint8), np.zeros((9, 8), dtype=np.uint8))
+    with pytest.raises(ValueError, match="staff_space_px"):
+        compare_idsr_components(
+            np.zeros((8, 8), dtype=np.uint8),
+            np.zeros((8, 8), dtype=np.uint8),
+            reference_notes=[],
+            candidate_notes=[],
+        )
 
 
 def test_gltf_export_is_self_contained_and_preserves_scene_metadata():
