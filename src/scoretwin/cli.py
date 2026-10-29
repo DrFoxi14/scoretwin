@@ -7,13 +7,16 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
+
 import cv2
 
 from .benchmark import evaluate_perspective_capture, evaluate_synthetic
 from .benchmark_manifest import evaluate_manifest
 from .benchmark_photo_smoke import evaluate_photo_smoke
 from .gltf_export import validate_embedded_gltf
-from .imaging import load_grayscale, rectify_global_skew, rectify_page_quadrilateral
+from .imaging import load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral
+from .metrics import compare_idsr_components
 from .pipeline import process_file
 from .proposal import save_model, train_proposal_model
 from .synthetic import generate_synthetic_page
@@ -107,6 +110,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate_gltf = commands.add_parser("validate-gltf", help="Validate a self-contained glTF 2.0 scene")
     validate_gltf.add_argument("input", type=Path, help="Path to a ScoreTwin .gltf JSON file")
+
+    compare = commands.add_parser(
+        "compare",
+        help="Report component-wise photometric, geometry, mask, and relationship metrics",
+    )
+    compare.add_argument("reference_image", type=Path)
+    compare.add_argument("candidate_image", type=Path)
+    compare.add_argument("--reference-page", type=int, default=0)
+    compare.add_argument("--candidate-page", type=int, default=0)
+    compare.add_argument("--reference-scene", type=Path, default=None)
+    compare.add_argument("--candidate-scene", type=Path, default=None)
+    compare.add_argument("--reference-mask", type=Path, default=None)
+    compare.add_argument("--candidate-mask", type=Path, default=None)
+    compare.add_argument("--staff-space-px", type=float, default=None)
+    compare.add_argument("--tolerance-sp", type=float, default=0.3)
+    compare.add_argument("--out", type=Path, default=Path("idsr-component-metrics.json"))
 
     serve = commands.add_parser("serve", help="Run the local browser interface")
     serve.add_argument("--host", default="127.0.0.1")
@@ -263,6 +282,69 @@ def main() -> None:
     elif args.command == "validate-gltf":
         report = validate_embedded_gltf(args.input.read_text(encoding="utf-8"))
         print(json.dumps({"input": str(args.input), **report}, indent=2, ensure_ascii=False))
+    elif args.command == "compare":
+        reference_pixels = load_pixel_array(args.reference_image, page=args.reference_page)
+        candidate_pixels = load_pixel_array(args.candidate_image, page=args.candidate_page)
+        reference_scene = None
+        candidate_scene = None
+        if args.reference_scene is not None:
+            reference_scene = json.loads(args.reference_scene.read_text(encoding="utf-8"))
+        if args.candidate_scene is not None:
+            candidate_scene = json.loads(args.candidate_scene.read_text(encoding="utf-8"))
+        if (reference_scene is None) != (candidate_scene is None):
+            raise ValueError("Provide both --reference-scene and --candidate-scene, or neither.")
+        reference_notes = candidate_notes = None
+        reference_relations = candidate_relations = None
+        staff_space_px = args.staff_space_px
+        if reference_scene is not None and candidate_scene is not None:
+            reference_notes = reference_scene.get("notes", [])
+            candidate_notes = candidate_scene.get("notes", [])
+            reference_relations = reference_scene.get("relations", [])
+            candidate_relations = candidate_scene.get("relations", [])
+            if staff_space_px is None:
+                spacings = [
+                    float(staff["spacing"])
+                    for staff in reference_scene.get("staffs", [])
+                    if float(staff.get("spacing", 0)) > 0
+                ]
+                if spacings:
+                    staff_space_px = float(np.median(spacings))
+        reference_mask = cv2.imread(str(args.reference_mask), cv2.IMREAD_GRAYSCALE) if args.reference_mask else None
+        candidate_mask = cv2.imread(str(args.candidate_mask), cv2.IMREAD_GRAYSCALE) if args.candidate_mask else None
+        report = compare_idsr_components(
+            reference_pixels,
+            candidate_pixels,
+            staff_space_px=staff_space_px,
+            reference_notes=reference_notes,
+            candidate_notes=candidate_notes,
+            reference_relations=reference_relations,
+            candidate_relations=candidate_relations,
+            reference_mask=reference_mask,
+            candidate_mask=candidate_mask,
+            tolerance_staff_spaces=args.tolerance_sp,
+        )
+        report["inputs"] = {
+            "reference_image": args.reference_image.name,
+            "candidate_image": args.candidate_image.name,
+            "reference_page_index": args.reference_page if args.reference_image.suffix.lower() == ".pdf" else None,
+            "candidate_page_index": args.candidate_page if args.candidate_image.suffix.lower() == ".pdf" else None,
+            "reference_scene_supplied": reference_scene is not None,
+            "candidate_scene_supplied": candidate_scene is not None,
+            "reference_mask_supplied": reference_mask is not None,
+            "candidate_mask_supplied": candidate_mask is not None,
+        }
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
+        print(json.dumps({
+            "report_path": str(args.out),
+            "photometric": report["metrics"]["photometric"],
+            "residual_compressibility": report["metrics"]["residual_compressibility"],
+            "geometry": report["geometry"],
+            "relationships": report["relationships"],
+            "mask": report["mask"],
+            "aggregate_did": report["aggregate_did"],
+            "aggregate_did_status": report["aggregate_did_status"],
+        }, indent=2, ensure_ascii=False, allow_nan=False))
     elif args.command == "serve":
         import uvicorn
         uvicorn.run("scoretwin.web:app", host=args.host, port=args.port, reload=False)
