@@ -393,7 +393,10 @@ def test_gltf_export_is_self_contained_and_preserves_scene_metadata():
                 "uncertainty": ["symbol_identity"],
             },
         ],
-        "relations": [{"type": "stem_of", "source": "stem-1", "target": "note-1"}],
+        "relations": [
+            {"type": "member_of", "source": "line-0", "target": "system-0"},
+            {"type": "stem_of", "source": "stem-1", "target": "note-1"},
+        ],
     }
 
     serialized = build_gltf(scene, layer_separation=7.5)
@@ -413,6 +416,8 @@ def test_gltf_export_is_self_contained_and_preserves_scene_metadata():
     stem_node = next(node for node in gltf["nodes"] if node["name"] == "stem-1")
     assert stem_node["extras"]["idsr"]["relations"]["stem_of"] == ["note-1"]
     assert stem_node["extras"]["idsr"]["semantic_layer_z"] == note_node["extras"]["idsr"]["semantic_layer_z"]
+    line_node = next(node for node in gltf["nodes"] if node["name"] == "line-0")
+    assert line_node["extras"]["idsr"]["relations"]["outgoing"][0]["type"] == "member_of"
     unknown_node = next(node for node in gltf["nodes"] if node["name"] == "unknown-1")
     unknown_mesh = gltf["meshes"][unknown_node["mesh"]]["primitives"][0]
     assert gltf["accessors"][unknown_mesh["attributes"]["POSITION"]]["count"] == 16
