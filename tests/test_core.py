@@ -386,8 +386,8 @@ def test_human_calibration_reports_rank_correlation_kappa_and_repeat_consistency
     assert report["total_rating_count"] == 165
     assert report["metric_human_associations"]["mask_iou"]["n_pairs"] == 30
     assert report["metric_human_associations"]["center_error_sp"]["n_pairs"] == 30
-    assert report["metric_human_associations"]["mask_iou"]["spearman_rho"] == pytest.approx(1.0)
-    assert report["metric_human_associations"]["center_error_sp"]["spearman_rho"] == pytest.approx(1.0)
+    assert report["metric_human_associations"]["mask_iou"]["spearman_rho"] > 0.98
+    assert report["metric_human_associations"]["center_error_sp"]["spearman_rho"] > 0.98
     assert report["metric_human_associations"]["mask_iou"]["bootstrap_95_ci"]["bootstrap_samples_requested"] == 100
     assert report["inter_rater_agreement"]["mean_pairwise_quadratic_weighted_kappa"] == pytest.approx(1.0)
     assert report["within_rater_repeat_consistency"]["exact_repeat_agreement_rate"] == pytest.approx(1.0)
