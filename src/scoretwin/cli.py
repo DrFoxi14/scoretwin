@@ -380,6 +380,7 @@ def main() -> None:
             "geometry": report["geometry"],
             "relationships": report["relationships"],
             "mask": report["mask"],
+            "mask_attack_sensitivity": report["mask_attack_sensitivity"],
             "aggregate_did": report["aggregate_did"],
             "aggregate_did_status": report["aggregate_did_status"],
         }, indent=2, ensure_ascii=False, allow_nan=False))
