@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from . import __version__
+from .capture_quality import diagnose_capture_quality
 from .imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch
 from .gltf_export import build_gltf, validate_embedded_gltf
 from .musicxml import build_musicxml
@@ -64,6 +65,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
         raise ValueError("Input image is too small to contain a score page.")
     started = time.perf_counter()
     estimated_skew = estimate_global_skew_degrees(gray)
+    capture_quality = diagnose_capture_quality(gray)
     staffs, binary, staff_mask = detect_staff_systems(gray)
     candidates = extract_notehead_candidates(gray, binary, staff_mask, staffs)
     model_training_metrics: dict = {}
@@ -359,6 +361,11 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             relations.append({"type": "candidate_region_in_staff", "source": item["id"], "target": system_id})
 
     warnings = []
+    for advisory in capture_quality["advisories"]:
+        warnings.append(
+            f"Capture quality ({advisory['code']}): {advisory['action']} "
+            "(heuristic, not a calibrated probability)."
+        )
     if estimated_skew is not None and abs(estimated_skew) > 0.75:
         warnings.append(
             f"Estimated staff-line tilt is {estimated_skew:.2f} degrees; this version does not rectify rotation or perspective."
@@ -381,6 +388,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             "rotation_rectified": False,
             "perspective_rectified": False,
         },
+        "capture_quality": capture_quality,
         "staffs": staff_objects,
         "primitives": primitives,
         "relations": relations,
