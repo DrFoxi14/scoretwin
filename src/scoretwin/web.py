@@ -500,7 +500,7 @@ def export_gltf(payload: dict = Body(...)) -> dict:
             background_png = base64.b64decode(encoded_background, validate=True)
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=422, detail="Background preview must be base64-encoded PNG data.") from exc
-        if not background_png.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+        if not background_png.startswith(b"\x89PNG\r\n\x1a\n"):
             raise HTTPException(status_code=422, detail="Background preview must be a PNG.")
     if scene.get("schema") != "scoretwin-scene-0.1":
         raise HTTPException(status_code=400, detail="Unrecognized ScoreTwin scene schema.")
