@@ -53,7 +53,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <canvas id="live-camera-sampler" width="192" height="144" hidden></canvas>
 <p id="live-quality-status" class="muted" role="status">Camera is off. You can also use the file picker below.</p>
 <button id="start-camera" type="button">Start rear camera</button>
-<button id="capture-frame" type="button" disabled>Capture frame</button>
+<button id="capture-frame" type="button" disabled>Capture 3-frame burst (select sharpest)</button>
 <button id="stop-camera" type="button" disabled>Stop camera</button>
 </section>
 <form id="upload"><label for="file">Choose an image or PDF</label><br><input id="file" name="file" type="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf"><br><label for="camera-file">Or take a photo with the phone camera</label><br><input id="camera-file" name="camera-file" type="file" accept="image/*" capture="environment"><br><label for="page">PDF page index (0-based; ignored for images)</label><br><input id="page" name="page" type="number" min="0" max="10000" value="0"><br><button id="submit" type="submit">Analyze page</button></form>
@@ -95,7 +95,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 </div>
 <script>
 let currentScene=null, originalScene=null, backgroundPreviewPngBase64=null, residualPngBase64=null, identityReportJson=null, yaw=-0.38, tilt=-0.2, dragging=false, draggingNote=-1, lastX=0, lastY=0;
-let liveCameraStream=null, liveQualityTimer=null, liveCapturedFile=null;
+let liveCameraStream=null, liveQualityTimer=null, liveCapturedFile=null, liveCaptureMetadata=null;
 let cornerImage=null, cornerScaleX=1, cornerScaleY=1, cornerPoints=[], selectingCorners=false, cornerObjectUrl=null;
 const canvas=document.getElementById('scene3d'),ctx=canvas.getContext('2d');
 const pageCanvas=document.getElementById('pageCanvas'),pageCtx=pageCanvas.getContext('2d');
@@ -334,20 +334,68 @@ document.getElementById('stop-camera').addEventListener('click',()=>{
  stopLiveCamera();
  document.getElementById('live-quality-status').textContent='Camera stopped. The last captured frame, if any, remains selected for analysis.';
 });
+function scoreCapturedCanvas(sourceCanvas){
+ const thumb=document.createElement('canvas');thumb.width=192;thumb.height=144;
+ const thumbCtx=thumb.getContext('2d',{willReadFrequently:true});
+ thumbCtx.drawImage(sourceCanvas,0,0,thumb.width,thumb.height);
+ const pixels=thumbCtx.getImageData(0,0,thumb.width,thumb.height).data;
+ const gray=new Float32Array(thumb.width*thumb.height);
+ let sum=0,sumSq=0;
+ for(let i=0,p=0;i<pixels.length;i+=4,p++){
+  const value=0.2126*pixels[i]+0.7152*pixels[i+1]+0.0722*pixels[i+2];
+  gray[p]=value;sum+=value;sumSq+=value*value;
+ }
+ const count=gray.length,mean=sum/count,contrast=Math.sqrt(Math.max(0,sumSq/count-mean*mean));
+ let edgeSum=0,edgeCount=0;
+ for(let y=1;y<thumb.height-1;y++)for(let x=1;x<thumb.width-1;x++){
+  const p=y*thumb.width+x;
+  edgeSum+=Math.abs(gray[p]-gray[p-1])+Math.abs(gray[p]-gray[p-thumb.width]);edgeCount+=2;
+ }
+ const edgeEnergy=edgeSum/Math.max(1,edgeCount);
+ return {contrast:contrast,edge_energy:edgeEnergy,selection_score:edgeEnergy*Math.min(1,contrast/28)};
+}
 document.getElementById('capture-frame').addEventListener('click',async()=>{
  if(!liveCameraStream||!liveVideo.videoWidth)return;
+ const button=document.getElementById('capture-frame');
+ button.disabled=true;
  const scale=Math.min(1,2400/Math.max(liveVideo.videoWidth,liveVideo.videoHeight));
- const output=document.createElement('canvas');
- output.width=Math.max(1,Math.round(liveVideo.videoWidth*scale));
- output.height=Math.max(1,Math.round(liveVideo.videoHeight*scale));
- const outputCtx=output.getContext('2d');
- outputCtx.drawImage(liveVideo,0,0,output.width,output.height);
- const blob=await new Promise(resolve=>output.toBlob(resolve,'image/jpeg',0.95));
- if(!blob){document.getElementById('live-quality-status').textContent='Capture failed; try again or use the camera file picker.';return;}
- liveCapturedFile=new File([blob],'scoretwin-live-capture.jpg',{type:'image/jpeg',lastModified:Date.now()});
- cornerPoints=[];selectingCorners=false;loadCornerPreview();
- document.getElementById('live-quality-status').textContent='Frame captured: '+output.width+'×'+output.height+'. You can select four page corners, then analyze this frame.';
- document.getElementById('status').textContent='Live camera frame selected. The uploaded JPEG created by the browser is now the source file for this analysis.';
+ const frames=[];
+ try{
+  for(let index=0;index<3;index++){
+   if(!liveCameraStream||!liveVideo.videoWidth)break;
+   const output=document.createElement('canvas');
+   output.width=Math.max(1,Math.round(liveVideo.videoWidth*scale));
+   output.height=Math.max(1,Math.round(liveVideo.videoHeight*scale));
+   const outputCtx=output.getContext('2d');
+   outputCtx.drawImage(liveVideo,0,0,output.width,output.height);
+   const blob=await new Promise(resolve=>output.toBlob(resolve,'image/jpeg',0.95));
+   if(blob)frames.push({blob,score:scoreCapturedCanvas(output),width:output.width,height:output.height});
+   document.getElementById('live-quality-status').textContent='Burst capture: '+frames.length+' of 3 frames collected.';
+   if(index<2)await new Promise(resolve=>setTimeout(resolve,180));
+  }
+  if(!frames.length)throw new Error('No camera frame could be encoded.');
+  frames.sort((a,b)=>b.score.selection_score-a.score.selection_score);
+  const selected=frames[0],chosenIndex=selected;
+  liveCapturedFile=new File([selected.blob],'scoretwin-live-burst-best.jpg',{type:'image/jpeg',lastModified:Date.now()});
+  liveCaptureMetadata={
+   method:'live_camera_burst_best_single_frame',
+   frames_requested:3,
+   frames_encoded:frames.length,
+   selection_metric:'edge_energy_times_contrast_saturation_on_192x144_preview',
+   selection_metric_calibrated:false,
+   frame_scores:frames.map((frame,index)=>({rank:index+1,contrast:frame.score.contrast,edge_energy:frame.score.edge_energy,selection_score:frame.score.selection_score,width_px:frame.width,height_px:frame.height})),
+   selected_width_px:selected.width,
+   selected_height_px:selected.height,
+   fusion_performed:false
+  };
+  cornerPoints=[];selectingCorners=false;loadCornerPreview();
+  document.getElementById('live-quality-status').textContent='Selected the sharpest-scoring frame from '+frames.length+' captured frame(s): '+selected.width+'×'+selected.height+', score '+selected.score.selection_score.toFixed(3)+'. This is single-frame selection, not super-resolution.';
+  document.getElementById('status').textContent='Best burst frame selected. The chosen browser-created JPEG becomes the uploaded source; the other frames are not merged.';
+ }catch(error){
+  document.getElementById('live-quality-status').textContent='Burst failed: '+(error.message||String(error))+' · You can retry or use the camera file picker.';
+ }finally{
+  button.disabled=!liveCameraStream;
+ }
 });
 document.getElementById('file').addEventListener('change',()=>{
  liveCapturedFile=null;loadCornerPreview();
@@ -379,6 +427,7 @@ form.addEventListener('submit',async(event)=>{
  const button=document.getElementById('submit');button.disabled=true;const status=document.getElementById('status');status.textContent='Processing locally…';
  try{
   const body=new FormData();body.append('file',file);body.append('page',document.getElementById('page').value||'0');
+  if(liveCaptureMetadata&&file===liveCapturedFile)body.append('capture_metadata_json',JSON.stringify(liveCaptureMetadata));
   if(selectingCorners){status.textContent='Select all four page corners or clear the selection first.';button.disabled=false;return;}
   if(cornerPoints.length===4)body.append('corners_json',JSON.stringify(cornerPoints));
   const response=await fetch('/api/analyze',{method:'POST',body});const result=await response.json();
