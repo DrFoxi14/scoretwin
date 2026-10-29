@@ -12,6 +12,7 @@ import pytest
 from scoretwin.benchmark import evaluate_perspective_capture, evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
 from scoretwin.benchmark_photo_smoke import evaluate_photo_smoke
+from scoretwin.calibration import evaluate_human_calibration, recommended_study_design
 from scoretwin.gltf_export import build_gltf, validate_embedded_gltf
 from scoretwin.metrics import binary_mask_metrics, compare_idsr_components, geometry_metrics, mask_attack_sensitivity, measure_bundle_storage, photometric_metrics, relation_metrics, residual_compressibility_metrics
 from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
@@ -343,6 +344,66 @@ def test_musicxml_duration_hypothesis_is_not_mistaken_for_exported_duration():
 def test_empty_scene_still_has_a_measure():
     root = ET.fromstring(build_musicxml({"staffs": [], "notes": []}))
     assert root.find("./part/measure") is not None
+
+
+def test_human_calibration_reports_rank_correlation_kappa_and_repeat_consistency():
+    pairs = []
+    repeated_indices = {4, 14, 24}
+    for index in range(30):
+        rating = int(round(1 + index * 6 / 29))
+        repeat_group = f"repeat-{index}" if index in repeated_indices else None
+        pair = {
+            "id": f"pair-{index:02d}",
+            "independence_group": f"source-piece-{index:02d}",
+            "repeat_group": repeat_group,
+            "ratings": {f"rater-{rater}": rating for rater in range(5)},
+            "metrics": {
+                "mask_iou": 0.2 + 0.8 * index / 29,
+                "center_error_sp": 1.0 - 0.95 * index / 29,
+            },
+        }
+        pairs.append(pair)
+        if index in repeated_indices:
+            repeated = dict(pair)
+            repeated["id"] = f"repeat-copy-{index:02d}"
+            pairs.append(repeated)
+
+    study = {
+        "schema": "scoretwin-human-calibration-v1",
+        "rating_scale": {
+            "min": 1,
+            "max": 7,
+            "anchors": {"1": "clearly different", "7": "visually identical"},
+        },
+        "metric_directions": {"mask_iou": "higher", "center_error_sp": "lower"},
+        "study_design": {"blinded": True, "randomized_order": True},
+        "pairs": pairs,
+    }
+    report = evaluate_human_calibration(study, bootstrap_samples=100, bootstrap_seed=8)
+    assert report["pair_count"] == 33
+    assert report["independence_group_count"] == 30
+    assert report["rater_count"] == 5
+    assert report["total_rating_count"] == 165
+    assert report["metric_human_associations"]["mask_iou"]["spearman_rho"] == pytest.approx(1.0)
+    assert report["metric_human_associations"]["center_error_sp"]["spearman_rho"] == pytest.approx(1.0)
+    assert report["metric_human_associations"]["mask_iou"]["bootstrap_95_ci"]["bootstrap_samples_requested"] == 100
+    assert report["inter_rater_agreement"]["mean_pairwise_quadratic_weighted_kappa"] == pytest.approx(1.0)
+    assert report["within_rater_repeat_consistency"]["exact_repeat_agreement_rate"] == pytest.approx(1.0)
+    assert report["scalar_did_weights"] is None
+    assert recommended_study_design()["planned_unique_pairs_with_20_percent_exclusion_margin"] >= 50
+
+
+def test_human_calibration_rejects_invalid_schema_ratings_and_directions():
+    with pytest.raises(ValueError, match="schema"):
+        evaluate_human_calibration({"schema": "wrong"})
+    valid = {
+        "schema": "scoretwin-human-calibration-v1",
+        "rating_scale": {"min": 1, "max": 7},
+        "metric_directions": {"mask_iou": "maybe"},
+        "pairs": [{"id": "pair-1", "ratings": {"r1": 5}, "metrics": {"mask_iou": 0.8}}],
+    }
+    with pytest.raises(ValueError, match="higher.*lower"):
+        evaluate_human_calibration(valid)
 
 
 def test_component_metrics_report_exact_photo_geometry_masks_and_relations():
