@@ -152,10 +152,10 @@ def extract_notehead_candidates(
 ) -> list[dict]:
     """Propose notehead centers from line-suppressed connected components.
 
-    Staff lines can cut a notehead into fragments. Narrow components are rejected,
-    and vertically separated fragments with matching horizontal support are joined.
-    The displayed notehead box is a geometry proposal sized relative to staff-space;
-    the original pixels remain the evidence and are preserved separately.
+    Staff lines can split a head into fragments; long components can also include
+    attached stems. For tall components, a horizontal-support profile trims narrow
+    stem rows and estimates the compact head region. The returned box is a geometry
+    proposal; the untouched source pixels remain the identity anchor.
     """
     if not staffs:
         return []
@@ -166,7 +166,7 @@ def extract_notehead_candidates(
         cv2.MORPH_CLOSE,
         cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
     )
-    count, _labels, stats, centroids = cv2.connectedComponentsWithStats(clean, 8)
+    count, labels, stats, centroids = cv2.connectedComponentsWithStats(clean, 8)
 
     components: list[dict] = []
     min_area = max(3, int(spacing * spacing * 0.035))
@@ -178,7 +178,30 @@ def extract_notehead_candidates(
             continue
         if not (0.52 * spacing <= w <= 2.0 * spacing):
             continue
-        if not (0.22 * spacing <= h <= 2.1 * spacing):
+
+        # A component whose stem does not cross another staff line can be tall.
+        # In its row profile the head has broad support, while the stem is narrow.
+        if h > 1.4 * spacing:
+            region = labels[y:y + h, x:x + w] == component
+            row_counts = region.sum(axis=1)
+            active_rows = np.flatnonzero(row_counts >= max(4, int(0.20 * spacing)))
+            if len(active_rows) < max(3, int(0.30 * spacing)):
+                continue
+            row_top, row_bottom = int(active_rows.min()), int(active_rows.max())
+            head_band = region[row_top:row_bottom + 1]
+            column_counts = head_band.sum(axis=0)
+            active_columns = np.flatnonzero(column_counts >= max(2, int(0.12 * spacing)))
+            if len(active_columns) < max(3, int(0.45 * spacing)):
+                continue
+            col_left, col_right = int(active_columns.min()), int(active_columns.max())
+            x_new, y_new = x + col_left, y + row_top
+            w_new, h_new = col_right - col_left + 1, row_bottom - row_top + 1
+            area_new = int(region[row_top:row_bottom + 1, col_left:col_right + 1].sum())
+            cx = x + (col_left + col_right) / 2.0
+            cy = y + (row_top + row_bottom) / 2.0
+            x, y, w, h, area = x_new, y_new, w_new, h_new, area_new
+
+        if not (0.22 * spacing <= h <= 1.45 * spacing):
             continue
         if not (0.45 <= w / max(h, 1) <= 3.8):
             continue
@@ -198,12 +221,10 @@ def extract_notehead_candidates(
             "center": [cx, cy],
             "area": area,
             "staff_index": staff_index,
-            "component_id": component,
         })
 
-    # A line crossing can split one head into two wide fragments. Only merge
-    # horizontally aligned components whose bounding boxes have a real vertical gap;
-    # overlapping boxes are kept separate to avoid collapsing close chord tones.
+    # A staffline can split a single head into two wide fragments. Merge only
+    # vertically separated boxes; overlapping components may be separate chord tones.
     used: set[int] = set()
     merged: list[dict] = []
     for i, first in enumerate(components):
@@ -223,8 +244,7 @@ def extract_notehead_candidates(
             bcx, bcy = second["center"]
             horizontal_overlap = max(0, min(ax + aw, bx + bw) - max(ax, bx)) / max(1, min(aw, bw))
             vertical_gap = max(0, max(ay, by) - min(ay + ah, by + bh))
-            dx = abs(acx - bcx)
-            dy = abs(acy - bcy)
+            dx, dy = abs(acx - bcx), abs(acy - bcy)
             if (
                 horizontal_overlap >= 0.65
                 and dx < 0.38 * spacing
@@ -233,8 +253,7 @@ def extract_notehead_candidates(
             ):
                 score = dx / spacing + vertical_gap / spacing
                 if best_score is None or score < best_score:
-                    best_score = score
-                    best_j = j
+                    best_score, best_j = score, j
 
         if best_j is not None:
             second = components[best_j]
@@ -249,7 +268,6 @@ def extract_notehead_candidates(
                 "center": [center_x, center_y],
                 "area": total_area,
                 "staff_index": first["staff_index"],
-                "source_boxes": [first["box"], second["box"]],
             })
             used.update((i, best_j))
 
@@ -260,7 +278,6 @@ def extract_notehead_candidates(
             "center": component["center"],
             "area": component["area"],
             "staff_index": component["staff_index"],
-            "source_boxes": [component["box"]],
         })
 
     proposals: list[dict] = []
@@ -275,19 +292,17 @@ def extract_notehead_candidates(
         x1 = min(gray.shape[1], x + head_width)
         y1 = min(gray.shape[0], y + head_height)
         cx_int, cy_int = int(round(cx)), int(round(cy))
-        x0 = max(0, cx_int - crop_half_width)
-        y0 = max(0, cy_int - crop_half_height)
+        crop_x0 = max(0, cx_int - crop_half_width)
+        crop_y0 = max(0, cy_int - crop_half_height)
         crop_x1 = min(gray.shape[1], cx_int + crop_half_width + 1)
         crop_y1 = min(gray.shape[0], cy_int + crop_half_height + 1)
-        aspect = head_width / max(head_height, 1)
         proposals.append({
             "bbox": [x, y, x1 - x, y1 - y],
             "center": [round(cx, 3), round(cy, 3)],
             "area_px": int(item["area"]),
-            "aspect_ratio": round(aspect, 4),
+            "aspect_ratio": round(head_width / max(head_height, 1), 4),
             "staff_index": int(item["staff_index"]),
-            "source_component_boxes": item["source_boxes"],
-            "crop": gray[y0:crop_y1, x0:crop_x1],
+            "crop": gray[crop_y0:crop_y1, crop_x0:crop_x1],
         })
 
     proposals.sort(key=lambda item: (item["staff_index"], item["center"][0], item["center"][1]))
@@ -301,11 +316,9 @@ def extract_notehead_candidates(
         ):
             continue
         kept.append(candidate)
-
     for index, candidate in enumerate(kept):
         candidate["id"] = f"proposal-{index:04d}"
     return kept
-
 def staff_step_and_pitch(cy: float, staff: StaffSystem) -> tuple[int, str, int]:
     """Map a notehead center to a diatonic treble-clef pitch proposal."""
     step = int(round((staff.bottom - cy) / (staff.spacing / 2.0)))
