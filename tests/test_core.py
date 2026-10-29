@@ -32,6 +32,15 @@ def test_detects_one_five_line_staff():
     assert binary.shape == staff_mask.shape
 
 
+def test_notehead_components_are_proposed():
+    gray = synthetic_staff()
+    staffs, binary, staff_mask = detect_staff_systems(gray)
+    candidates = extract_notehead_candidates(gray, binary, staff_mask, staffs)
+    assert len(candidates) >= 1
+    assert all(candidate["bbox"][2] > 0 and candidate["bbox"][3] > 0 for candidate in candidates)
+    assert all("crop" in candidate for candidate in candidates)
+
+
 def test_pitch_mapping_uses_treble_bottom_line_e4():
     staffs, _, _ = detect_staff_systems(synthetic_staff())
     step, letter, octave = staff_step_and_pitch(float(staffs[0].bottom), staffs[0])
@@ -68,6 +77,11 @@ def test_musicxml_is_well_formed_and_marks_uncertainty():
     assert root.attrib["version"] == "4.0"
     assert root.find(".//pitch/step").text == "G"
     assert "IDSR_REVIEW" in root.find(".//other-notation").text
+
+
+def test_empty_scene_still_has_a_measure():
+    root = ET.fromstring(build_musicxml({"staffs": [], "notes": []}))
+    assert root.find("./part/measure") is not None
 
 
 def test_pipeline_creates_bundle_and_preserves_source_bytes(tmp_path):
