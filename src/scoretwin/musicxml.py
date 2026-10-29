@@ -57,9 +57,14 @@ def _pitch_rank(note: dict) -> tuple[int, float]:
     return octave * 7 + _STEP_INDEX[step], alter
 
 
-def _add_attributes(measure: ET.Element, staffs: list[dict], staff_numbers: dict[int, int]) -> None:
+def _add_attributes(
+    measure: ET.Element,
+    staffs: list[dict],
+    staff_numbers: dict[int, int],
+    divisions: int = 1,
+) -> None:
     attributes = _sub(measure, "attributes")
-    _sub(attributes, "divisions", 1)
+    _sub(attributes, "divisions", _as_int(divisions, "MusicXML divisions", 1))
 
     first_staff = staffs[0] if staffs else {}
     fifths = _as_int(first_staff.get("key_fifths", 0), "Key signature fifths")
@@ -182,7 +187,12 @@ def _event_groups(notes: list[dict]) -> tuple[list[list[dict]], bool]:
     return groups, explicit_onsets
 
 
-def _write_voice(measure: ET.Element, notes: list[dict], voice_number: int) -> int:
+def _write_voice(
+    measure: ET.Element,
+    notes: list[dict],
+    voice_number: int,
+    divisions: int = 1,
+) -> int:
     groups, explicit_onsets = _event_groups(notes)
     cursor = 0
     for group in groups:
@@ -211,7 +221,7 @@ def _write_voice(measure: ET.Element, notes: list[dict], voice_number: int) -> i
             if octave > 9:
                 raise ValueError("Pitch octave must be between 0 and 9.")
             duration_value = note.get("duration")
-            duration = 1 if duration_value is None else _as_int(duration_value, "Note duration", 1)
+            duration = divisions if duration_value is None else _as_int(duration_value, "Note duration", 1)
             note_type = note.get("type", "quarter" if duration_value is None else None)
             if note_type is not None and note_type not in _NOTE_TYPES:
                 raise ValueError(f"Unsupported MusicXML note type: {note_type}")
@@ -273,14 +283,30 @@ def build_musicxml(scene: dict) -> str:
     )
 
     staffs = scene.get("staffs", [])
-    notes = scene.get("notes", [])
+    notes = [dict(note) for note in scene.get("notes", [])]
+    timing_units = scene.get("timing_units", "legacy")
+    if timing_units not in {"legacy", "ticks_16_per_quarter"}:
+        raise ValueError("timing_units must be 'legacy' or 'ticks_16_per_quarter'.")
+    divisions = 16 if timing_units == "ticks_16_per_quarter" else 1
+    if divisions == 16:
+        # Normalize older quarter-based onset/duration values to sixteenth-note ticks,
+        # while preserving explicit *_ticks values written by the UI.
+        for note in notes:
+            if note.get("onset_ticks") is not None:
+                note["onset"] = _as_int(note["onset_ticks"], "Note onset ticks", 0)
+            elif note.get("onset") is not None:
+                note["onset"] = _as_int(note["onset"], "Note onset", 0) * 16
+            if note.get("duration_ticks") is not None:
+                note["duration"] = _as_int(note["duration_ticks"], "Note duration ticks", 1)
+            elif note.get("duration") is not None:
+                note["duration"] = _as_int(note["duration"], "Note duration", 1) * 16
     if not staffs:
         part_list = _sub(root, "part-list")
         score_part = _sub(part_list, "score-part", id="P1")
         _sub(score_part, "part-name", "Unresolved score")
         part = _sub(root, "part", id="P1")
         measure = _sub(part, "measure", number=1)
-        _add_attributes(measure, [], {})
+        _add_attributes(measure, [], {}, divisions=divisions)
         return ET.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
 
     parts: dict[str, list[tuple[int, dict]]] = defaultdict(list)
@@ -351,9 +377,12 @@ def build_musicxml(scene: dict) -> str:
                 _sub(measure, "print", new_system="yes")
             if output_measure == 1 or is_new_system:
                 part_attributes_staffs = sorted(systems[system], key=lambda item: (staff_numbers[item[0]], _staff_top(item[1])))
-                _add_attributes(measure, [staff for _, staff in part_attributes_staffs], {
-                    order: staff_numbers[index] for order, (index, staff) in enumerate(part_attributes_staffs)
-                })
+                _add_attributes(
+                    measure,
+                    [staff for _, staff in part_attributes_staffs],
+                    {order: staff_numbers[index] for order, (index, staff) in enumerate(part_attributes_staffs)},
+                    divisions=divisions,
+                )
             previous_system = system
 
             by_voice: dict[int, list[dict]] = defaultdict(list)
@@ -363,7 +392,7 @@ def build_musicxml(scene: dict) -> str:
                 by_voice[voice].append(note)
             voices = sorted(by_voice)
             for voice_index, voice in enumerate(voices):
-                end = _write_voice(measure, by_voice[voice], voice)
+                end = _write_voice(measure, by_voice[voice], voice, divisions=divisions)
                 if voice_index < len(voices) - 1 and end > 0:
                     backup = _sub(measure, "backup")
                     _sub(backup, "duration", end)
