@@ -72,7 +72,11 @@ def load_grayscale(path: str | Path, page: int = 0, dpi: int = 200) -> np.ndarra
         with fitz.open(file_path) as document:
             if page < 0 or page >= len(document):
                 raise ValueError(f"PDF page index {page} is outside 0..{len(document) - 1}.")
-            pix = document[page].get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72), alpha=False)
+            pdf_page = document[page]
+            image = _native_full_page_image(pdf_page, document, fitz)
+            if image is not None:
+                return image
+            pix = pdf_page.get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72), alpha=False)
             encoded = np.frombuffer(pix.tobytes("png"), dtype=np.uint8)
             gray = cv2.imdecode(encoded, cv2.IMREAD_GRAYSCALE)
             if gray is None:
@@ -84,6 +88,65 @@ def load_grayscale(path: str | Path, page: int = 0, dpi: int = 200) -> np.ndarra
     if gray is None:
         raise ValueError(f"Unsupported or corrupt image file: {file_path}")
     return gray
+
+
+def _native_full_page_image(pdf_page, document, fitz) -> np.ndarray | None:
+    """Use native samples when a PDF page is one axis-aligned full-page raster.
+
+    Rendering an image-only scan PDF at a nominal DPI can magnify it by an
+    arbitrary page-size convention. The raster remains the observed source, so
+    analyzing its native samples avoids artificial upsampling. Mixed/vector
+    pages and rotated or cropped images retain the normal PDF render path.
+    """
+    if pdf_page.rotation != 0 or pdf_page.get_text().strip() or pdf_page.get_drawings():
+        return None
+    images = pdf_page.get_images(full=True)
+    if len(images) != 1:
+        return None
+    xref, _smask, width, height = images[0][:4]
+    page_rect = pdf_page.rect
+    if width < 1 or height < 1 or page_rect.width <= 0 or page_rect.height <= 0:
+        return None
+    page_ratio = float(page_rect.width / page_rect.height)
+    image_ratio = float(width / height)
+    if abs(page_ratio - image_ratio) / max(page_ratio, image_ratio) > 0.01:
+        return None
+
+    placements = pdf_page.get_image_rects(xref, transform=True)
+    if len(placements) != 1:
+        return None
+    rect, matrix = placements[0]
+    tolerance = 0.5
+    if (
+        abs(rect.x0 - page_rect.x0) > tolerance
+        or abs(rect.y0 - page_rect.y0) > tolerance
+        or abs(rect.x1 - page_rect.x1) > tolerance
+        or abs(rect.y1 - page_rect.y1) > tolerance
+        or abs(matrix.b) > 1e-6
+        or abs(matrix.c) > 1e-6
+        or matrix.a <= 0
+        or matrix.d <= 0
+    ):
+        return None
+
+    pix = fitz.Pixmap(document, xref)
+    if pix.colorspace is not None and pix.colorspace.name != "DeviceGray":
+        pix = fitz.Pixmap(fitz.csRGB, pix)
+    samples = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+    if pix.n == 1:
+        return samples[:, :, 0].copy()
+    if pix.n == 2:
+        gray = samples[:, :, 0].astype(np.float32)
+        alpha = samples[:, :, 1].astype(np.float32) / 255.0
+        return np.clip(np.rint(gray * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)
+    if pix.n == 3:
+        return cv2.cvtColor(samples, cv2.COLOR_RGB2GRAY)
+    if pix.n == 4:
+        rgb = samples[:, :, :3].astype(np.float32)
+        alpha = samples[:, :, 3:4].astype(np.float32) / 255.0
+        rgb = np.clip(np.rint(rgb * alpha + 255.0 * (1.0 - alpha)), 0, 255).astype(np.uint8)
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    return None
 
 
 def binarize(gray: np.ndarray) -> np.ndarray:
