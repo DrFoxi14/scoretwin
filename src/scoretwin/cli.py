@@ -11,7 +11,7 @@ import cv2
 
 from .benchmark import evaluate_synthetic
 from .benchmark_manifest import evaluate_manifest
-from .imaging import load_grayscale, rectify_global_skew
+from .imaging import load_grayscale, rectify_global_skew, rectify_page_quadrilateral
 from .pipeline import process_file
 from .proposal import save_model, train_proposal_model
 from .synthetic import generate_synthetic_page
@@ -28,6 +28,11 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--model", type=Path, default=None)
     analyze.add_argument("--rectify-skew", action="store_true", help="Use a reversible global-skew analysis raster")
     analyze.add_argument("--max-skew-degrees", type=float, default=12.0)
+    analyze.add_argument(
+        "--corners-json",
+        default=None,
+        help='Manual page corners as JSON: [[x_tl,y_tl],[x_tr,y_tr],[x_br,y_br],[x_bl,y_bl]] in source pixels',
+    )
 
     train = commands.add_parser("train-model", help="Train the synthetic patch proposal model")
     train.add_argument("--out", type=Path, default=Path("models/proposal.npz"))
@@ -69,6 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
     rectify.add_argument("--page", type=int, default=0)
     rectify.add_argument("--dpi", type=int, default=200)
     rectify.add_argument("--max-skew-degrees", type=float, default=12.0)
+    rectify.add_argument(
+        "--corners-json",
+        default=None,
+        help='Manual page corners as JSON: [[x_tl,y_tl],[x_tr,y_tr],[x_br,y_br],[x_bl,y_bl]] in source pixels',
+    )
 
     serve = commands.add_parser("serve", help="Run the local browser interface")
     serve.add_argument("--host", default="127.0.0.1")
@@ -86,6 +96,7 @@ def main() -> None:
             model_path=args.model,
             rectify_skew=args.rectify_skew,
             max_skew_degrees=args.max_skew_degrees,
+            rectify_corners=json.loads(args.corners_json) if args.corners_json else None,
         )
         print(json.dumps({
             "output_dir": result["output_dir"],
@@ -156,10 +167,10 @@ def main() -> None:
         source_bytes = args.input.read_bytes()
         source_sha256 = hashlib.sha256(source_bytes).hexdigest()
         gray = load_grayscale(args.input, page=args.page, dpi=args.dpi)
-        rectification = rectify_global_skew(
-            gray,
-            max_abs_skew_degrees=args.max_skew_degrees,
-        )
+        if args.corners_json:
+            rectification = rectify_page_quadrilateral(gray, json.loads(args.corners_json))
+        else:
+            rectification = rectify_global_skew(gray, max_abs_skew_degrees=args.max_skew_degrees)
         args.out.mkdir(parents=True, exist_ok=True)
         source_copy = args.out / "source" / args.input.name
         source_copy.parent.mkdir(parents=True, exist_ok=True)
@@ -169,7 +180,7 @@ def main() -> None:
         if not cv2.imwrite(str(rectified_path), rectification.image):
             raise IOError(f"Could not write rectified preview to {rectified_path}")
         metadata = {
-            "schema": "scoretwin-capture-rectification-0.1",
+            "schema": "scoretwin-capture-rectification-0.2",
             "source_file_name": args.input.name,
             "source_sha256": source_sha256,
             "source_copy_sha256": copied_source_sha256,
@@ -192,6 +203,7 @@ def main() -> None:
             "estimated_skew_degrees": rectification.estimated_skew_degrees,
             "applied_correction_degrees": rectification.applied_correction_degrees,
             "rectification_applied": rectification.applied,
+            "rectification_method": rectification.method,
             "reason": rectification.reason,
         }, indent=2, ensure_ascii=False))
     elif args.command == "serve":

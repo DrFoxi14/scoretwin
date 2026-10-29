@@ -41,6 +41,7 @@ class CaptureRectification:
     applied_correction_degrees: float
     applied: bool
     reason: str
+    method: str = "global_rotation"
 
     def to_dict(self) -> dict:
         return {
@@ -48,6 +49,7 @@ class CaptureRectification:
             "applied_correction_degrees": self.applied_correction_degrees,
             "applied": self.applied,
             "reason": self.reason,
+            "method": self.method,
             "source_to_rectified": self.source_to_rectified.tolist(),
             "rectified_to_source": self.rectified_to_source.tolist(),
             "coordinate_convention": "pixel centers; x increases right, y increases down",
@@ -239,6 +241,88 @@ def rectify_global_skew(
         estimated,
         True,
         "global_rotation_rectified",
+        "global_rotation",
+    )
+
+
+def rectify_page_quadrilateral(
+    gray: np.ndarray,
+    corners_xy: np.ndarray | list,
+    border_value: int = 255,
+    max_output_pixels: int = 80_000_000,
+) -> CaptureRectification:
+    """Perspective-rectify a page from manually supplied TL, TR, BR, BL corners.
+
+    The four source points are measured in source-raster pixel-center coordinates.
+    This estimates a planar homography only: it cannot flatten curl, folds, or
+    non-planar pages. The caller must verify the corners; no page detector is run.
+    """
+    if gray.ndim != 2 or gray.dtype != np.uint8:
+        raise ValueError("rectify_page_quadrilateral expects a uint8 grayscale image.")
+    if min(gray.shape) < 2:
+        raise ValueError("Input image must be at least 2x2 pixels.")
+    if not 0 <= int(border_value) <= 255:
+        raise ValueError("border_value must be an integer in 0..255.")
+    if not isinstance(max_output_pixels, (int, np.integer)) or max_output_pixels < 4:
+        raise ValueError("max_output_pixels must be an integer of at least 4.")
+
+    source = np.asarray(corners_xy, dtype=np.float64)
+    if source.shape != (4, 2) or not np.all(np.isfinite(source)):
+        raise ValueError("corners_xy must contain four finite [x, y] points.")
+    height, width = gray.shape
+    if np.any(source[:, 0] < 0) or np.any(source[:, 0] > width - 1):
+        raise ValueError("All corner x-coordinates must fall inside the source image.")
+    if np.any(source[:, 1] < 0) or np.any(source[:, 1] > height - 1):
+        raise ValueError("All corner y-coordinates must fall inside the source image.")
+
+    # Ordered TL, TR, BR, BL points must form a strictly convex quadrilateral.
+    edges = np.roll(source, -1, axis=0) - source
+    cross_products = np.cross(edges, np.roll(edges, -1, axis=0))
+    if np.any(cross_products <= 1e-6):
+        raise ValueError("Corners must form a clockwise, strictly convex quadrilateral in TL, TR, BR, BL order.")
+    area = 0.5 * abs(float(np.dot(source[:, 0], np.roll(source[:, 1], -1))
+                           - np.dot(source[:, 1], np.roll(source[:, 0], -1))))
+    if area < 4.0:
+        raise ValueError("The selected page quadrilateral is too small to rectify.")
+
+    top = float(np.linalg.norm(source[1] - source[0]))
+    bottom = float(np.linalg.norm(source[2] - source[3]))
+    left = float(np.linalg.norm(source[3] - source[0]))
+    right = float(np.linalg.norm(source[2] - source[1]))
+    output_width = max(2, int(round(max(top, bottom))) + 1)
+    output_height = max(2, int(round(max(left, right))) + 1)
+    if output_width * output_height > max_output_pixels:
+        raise ValueError(
+            f"Rectified output would contain {output_width * output_height} pixels; "
+            f"limit is {max_output_pixels}."
+        )
+
+    destination = np.asarray(
+        [[0.0, 0.0], [output_width - 1.0, 0.0],
+         [output_width - 1.0, output_height - 1.0], [0.0, output_height - 1.0]],
+        dtype=np.float32,
+    )
+    homography = cv2.getPerspectiveTransform(source.astype(np.float32), destination)
+    if not np.all(np.isfinite(homography)) or abs(float(np.linalg.det(homography))) < 1e-12:
+        raise ValueError("The selected corners do not define an invertible homography.")
+    inverse = np.linalg.inv(homography)
+    rectified = cv2.warpPerspective(
+        gray,
+        homography,
+        (output_width, output_height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=int(border_value),
+    )
+    return CaptureRectification(
+        rectified,
+        homography.astype(np.float64),
+        inverse.astype(np.float64),
+        None,
+        0.0,
+        True,
+        "manual_page_quadrilateral_rectified",
+        "manual_page_quadrilateral",
     )
 
 def _merge_active_rows(active: np.ndarray, counts: np.ndarray, max_gap: int = 2) -> list[int]:

@@ -8,7 +8,7 @@ import numpy as np
 
 from scoretwin.benchmark import evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
-from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, rectify_global_skew, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
+from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
 from scoretwin.proposal import load_model, predict_patch, save_model, train_proposal_model
@@ -145,6 +145,48 @@ def test_global_skew_rectification_returns_identity_when_no_lines_are_found():
     assert result.reason == "no_dominant_near_horizontal_lines"
     assert np.array_equal(result.image, blank)
     assert np.array_equal(result.source_to_rectified, np.eye(3))
+
+
+def test_manual_page_quadrilateral_rectification_is_reversible_and_keeps_source():
+    page = np.full((180, 260), 255, dtype=np.uint8)
+    cv2.line(page, (30, 40), (230, 40), 0, 2)
+    cv2.line(page, (30, 80), (230, 80), 0, 2)
+    source_corners = np.asarray([[20, 15], [235, 28], [250, 160], [8, 168]], dtype=np.float32)
+    reference_corners = np.asarray([[0, 0], [259, 0], [259, 179], [0, 179]], dtype=np.float32)
+    page_to_photo = cv2.getPerspectiveTransform(reference_corners, source_corners)
+    photographed = cv2.warpPerspective(page, page_to_photo, (260, 180), borderValue=255)
+    original = photographed.copy()
+
+    result = rectify_page_quadrilateral(photographed, source_corners)
+
+    assert result.applied
+    assert result.method == "manual_page_quadrilateral"
+    assert result.reason == "manual_page_quadrilateral_rectified"
+    assert result.image.shape[0] >= 130
+    assert result.image.shape[1] >= 230
+    assert np.array_equal(photographed, original)
+    mapped_corners = transform_points_xy(source_corners, result.source_to_rectified)
+    expected = np.asarray(
+        [[0, 0], [result.image.shape[1] - 1, 0],
+         [result.image.shape[1] - 1, result.image.shape[0] - 1], [0, result.image.shape[0] - 1]],
+        dtype=np.float64,
+    )
+    assert np.max(np.abs(mapped_corners - expected)) < 1e-3
+    points = np.asarray([[31.0, 43.0], [124.0, 88.0], [227.0, 152.0]])
+    roundtrip = transform_points_xy(
+        transform_points_xy(points, result.source_to_rectified), result.rectified_to_source
+    )
+    assert np.max(np.abs(roundtrip - points)) < 1e-7
+
+
+def test_manual_page_quadrilateral_rejects_invalid_corner_order_and_bounds():
+    gray = np.full((100, 120), 255, dtype=np.uint8)
+    with np.testing.assert_raises_regex(ValueError, "strictly convex"):
+        rectify_page_quadrilateral(gray, [[5, 5], [100, 80], [100, 5], [5, 80]])
+    with np.testing.assert_raises_regex(ValueError, "clockwise"):
+        rectify_page_quadrilateral(gray, [[5, 5], [5, 90], [100, 90], [100, 5]])
+    with np.testing.assert_raises_regex(ValueError, "inside the source image"):
+        rectify_page_quadrilateral(gray, [[-1, 0], [100, 0], [100, 90], [0, 90]])
 
 
 def test_pitch_mapping_uses_treble_bottom_line_e4():
@@ -351,6 +393,27 @@ def test_pipeline_can_analyze_rectified_raster_and_keep_source_coordinates(tmp_p
     assert diagnostic["analysis_image_shape_px"] == [scene["image"]["height"], scene["image"]["width"]]
     assert (output_dir / "analysis-raster.png").exists()
     assert (output_dir / "capture-transform.json").exists()
+
+
+def test_pipeline_can_analyze_manual_page_quadrilateral_and_record_homography(tmp_path):
+    gray, _truth = generate_synthetic_page(seed=53, staff_count=1, notes_per_staff=5)
+    height, width = gray.shape
+    input_path = tmp_path / "page.png"
+    assert cv2.imwrite(str(input_path), gray)
+    output_dir = tmp_path / "analysis-perspective"
+    corners = [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]]
+
+    result = process_file(input_path, output_dir, rectify_corners=corners)
+
+    diagnostics = result["scene"]["capture_diagnostics"]
+    assert diagnostics["perspective_rectification_requested"]
+    assert diagnostics["perspective_rectified"]
+    assert not diagnostics["rotation_rectified"]
+    assert diagnostics["rectification_method"] == "manual_page_quadrilateral"
+    assert result["source_hash_verified"]
+    capture = __import__("json").loads((output_dir / "capture-transform.json").read_text(encoding="utf-8"))
+    assert capture["rectification"]["method"] == "manual_page_quadrilateral"
+    assert capture["source_bytes_preserved"]
 
 
 def test_pipeline_links_detected_stems_to_noteheads():

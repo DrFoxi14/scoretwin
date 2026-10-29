@@ -58,6 +58,13 @@ Create an optional global-rotation preview with a reversible transform back to s
 
 The bundle stores a byte-identical source copy, a resampled preview, and both coordinate transforms. This is a capture diagnostic; the default OMR analysis still runs on the source raster. It handles one global rotation only, not perspective, page curl, or local deformation.
 
+For a perspective photo, manually select the page corners in top-left, top-right, bottom-right, bottom-left order, then pass those source-raster pixel coordinates as JSON:
+
+    scoretwin rectify-preview ./score.jpg --corners-json '[[42,31],[1420,77],[1375,1980],[18,1902]]' --out ./runs/page-rectification
+    scoretwin analyze ./score.jpg --corners-json '[[42,31],[1420,77],[1375,1980],[18,1902]]' --out ./runs/score-rectified
+
+The transform maps those four points to a rectangle and records the forward and inverse homographies. It assumes the page is planar and the corners are correct; it does not automatically detect the page or flatten curvature, folds, or local warping. The source file remains byte-identical in the analysis bundle.
+
 To opt in to analyzing the rectified raster while retaining source coordinates in the scene metadata:
 
     scoretwin analyze ./score.jpg --rectify-skew --out ./runs/score-rectified
@@ -68,7 +75,7 @@ Run the browser app:
 
     scoretwin serve --host 127.0.0.1 --port 8000
 
-Then open http://127.0.0.1:8000. Uploaded files are processed by the local server process. No remote inference API is used by this prototype. After edits, use **Download edited scene JSON** to keep the adjusted geometry and pitch proposals; **Regenerate MusicXML from edits** exports the current symbolic projection.
+Then open http://127.0.0.1:8000. Uploaded files are processed by the local server process. No remote inference API is used by this prototype. On an image, **Select four page corners** enables a clockwise tap sequence from top-left through bottom-left; analysis applies the corresponding planar homography and records its inverse. This is optional and does not flatten a curled page. After edits, use **Download edited scene JSON** to keep the adjusted geometry and pitch proposals; **Regenerate MusicXML from edits** exports the current symbolic projection.
 
 ## Output bundle
 

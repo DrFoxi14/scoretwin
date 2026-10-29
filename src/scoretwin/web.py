@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-import hashlib
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -13,9 +13,8 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 
 from .imaging import load_grayscale
-from .pipeline import analyze_array, render_geometry_scene
+from .pipeline import process_file, render_geometry_scene
 from .musicxml import build_musicxml
-from .proposal import get_default_model, load_model
 
 app = FastAPI(title="ScoreTwin / IDSR", version="0.1.0")
 ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".pdf"}
@@ -35,6 +34,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#ced7e5}a{color:#b7f36b}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.editor-row{display:flex;gap:12px;align-items:center;justify-content:space-between;border-top:1px solid #303949;padding:10px 0}.editor-row select{background:#10131a;color:#edf0f6;padding:7px;border:1px solid #46536a;border-radius:7px}
 canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px solid #303949;touch-action:none}
 #pageCanvas{height:auto;display:block;background:#f4f4f4;cursor:crosshair}
+#cornerCanvas{height:auto;display:block;background:#f4f4f4;cursor:crosshair}
 #scene3d{height:380px}.status{padding:10px 0;font-weight:600}
 @media(max-width:700px){.grid{grid-template-columns:1fr}canvas{height:300px}#pageCanvas{height:auto}#scene3d{height:300px}}
 </style>
@@ -44,6 +44,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <p class="muted">Geometry-first score digitization prototype. The source stays the identity anchor; symbolic proposals remain provisional.</p>
 <div class="panel">
 <form id="upload"><label for="file">Choose an image or PDF</label><br><input id="file" name="file" type="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf"><br><label for="camera-file">Or take a photo with the phone camera</label><br><input id="camera-file" name="camera-file" type="file" accept="image/*" capture="environment"><br><label for="page">PDF page index (0-based; ignored for images)</label><br><input id="page" name="page" type="number" min="0" max="10000" value="0"><br><button id="submit" type="submit">Analyze page</button></form>
+<div id="corner-panel" hidden><h2>Optional perspective correction</h2><p class="muted">On a photo, tap the page corners in order: top left, top right, bottom right, bottom left. This assumes a flat page.</p><button id="mark-corners" type="button">Select four page corners</button><button id="clear-corners" type="button">Clear corners</button><p id="corner-status" class="muted" aria-live="polite"></p><canvas id="cornerCanvas" aria-label="Preview for selecting page corners"></canvas></div>
 <div id="status" class="status" role="status"></div>
 </div>
 <div id="results" hidden>
@@ -70,14 +71,16 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 </div>
 <script>
 let currentScene=null, originalScene=null, yaw=-0.38, tilt=-0.2, dragging=false, draggingNote=-1, lastX=0, lastY=0;
+let cornerImage=null, cornerScaleX=1, cornerScaleY=1, cornerPoints=[], selectingCorners=false, cornerObjectUrl=null;
 const canvas=document.getElementById('scene3d'),ctx=canvas.getContext('2d');
 const pageCanvas=document.getElementById('pageCanvas'),pageCtx=pageCanvas.getContext('2d');
+const cornerCanvas=document.getElementById('cornerCanvas'),cornerCtx=cornerCanvas.getContext('2d');
 const sourcePreview=new Image();
 sourcePreview.onload=()=>{pageCanvas.width=sourcePreview.naturalWidth;pageCanvas.height=sourcePreview.naturalHeight;drawPage();};
 function pagePoint(event){
  const rect=pageCanvas.getBoundingClientRect();
- return [(event.clientX-rect.left)/rect.width*currentScene.image.width,
-         (event.clientY-rect.top)/rect.height*currentScene.image.height];
+ return [(event.clientX-rect.left-pageCanvas.clientLeft)/pageCanvas.clientWidth*currentScene.image.width,
+         (event.clientY-rect.top-pageCanvas.clientTop)/pageCanvas.clientHeight*currentScene.image.height];
 }
 function syncPrimitive(note){
  const primitive=(currentScene.primitives||[]).find(item=>item.id===(note.primitive_id||note.id));
@@ -119,6 +122,41 @@ function drawPage(){
   const x=item.bbox[0]*sx,y=item.bbox[1]*sy,w=item.bbox[2]*sx,h=item.bbox[3]*sy;
   pageCtx.strokeStyle='#e3b35b';pageCtx.lineWidth=1;pageCtx.strokeRect(x,y,w,h);
  });
+}
+function activeFile(){return document.getElementById('camera-file').files[0]||document.getElementById('file').files[0]||null;}
+function drawCornerPage(){
+ if(!cornerImage||!cornerImage.complete)return;
+ cornerCtx.clearRect(0,0,cornerCanvas.width,cornerCanvas.height);
+ cornerCtx.drawImage(cornerImage,0,0,cornerCanvas.width,cornerCanvas.height);
+ if(cornerPoints.length>1){
+  cornerCtx.strokeStyle='#d43853';cornerCtx.lineWidth=Math.max(2,cornerCanvas.width/600);cornerCtx.beginPath();
+  cornerPoints.forEach((point,index)=>{const x=point[0]*cornerScaleX,y=point[1]*cornerScaleY;index===0?cornerCtx.moveTo(x,y):cornerCtx.lineTo(x,y);});
+  if(cornerPoints.length===4)cornerCtx.closePath();cornerCtx.stroke();
+ }
+ cornerPoints.forEach((point,index)=>{
+  const x=point[0]*cornerScaleX,y=point[1]*cornerScaleY;
+  cornerCtx.fillStyle='#d43853';cornerCtx.beginPath();cornerCtx.arc(x,y,Math.max(8,cornerCanvas.width/150),0,Math.PI*2);cornerCtx.fill();
+  cornerCtx.fillStyle='#fff';cornerCtx.font='bold '+Math.max(11,cornerCanvas.width/100)+'px system-ui';
+  cornerCtx.fillText(String(index+1),x+5,y-5);
+ });
+}
+function loadCornerPreview(){
+ const file=activeFile();cornerPoints=[];selectingCorners=false;cornerImage=null;
+ document.getElementById('corner-status').textContent='';
+ if(cornerObjectUrl){URL.revokeObjectURL(cornerObjectUrl);cornerObjectUrl=null;}
+ if(!file||file.name.toLowerCase().endsWith('.pdf')){document.getElementById('corner-panel').hidden=true;return;}
+ cornerObjectUrl=URL.createObjectURL(file);cornerImage=new Image();
+ cornerImage.onload=()=>{
+  const previewScale=Math.min(1,1600/Math.max(cornerImage.naturalWidth,cornerImage.naturalHeight));
+  cornerCanvas.width=Math.max(1,Math.round(cornerImage.naturalWidth*previewScale));
+  cornerCanvas.height=Math.max(1,Math.round(cornerImage.naturalHeight*previewScale));
+  cornerScaleX=cornerCanvas.width/cornerImage.naturalWidth;
+  cornerScaleY=cornerCanvas.height/cornerImage.naturalHeight;
+  document.getElementById('corner-panel').hidden=false;drawCornerPage();
+  URL.revokeObjectURL(cornerObjectUrl);cornerObjectUrl=null;
+ };
+ cornerImage.onerror=()=>{document.getElementById('corner-panel').hidden=true;};
+ cornerImage.src=cornerObjectUrl;
 }
 function rotatePoint(x,y,z){
  const cy=Math.cos(yaw),sy=Math.sin(yaw),cx=Math.cos(tilt),sx=Math.sin(tilt);
@@ -200,11 +238,33 @@ function buildEditor(){
  });
 }
 const form=document.getElementById('upload');
+document.getElementById('file').addEventListener('change',loadCornerPreview);
+document.getElementById('camera-file').addEventListener('change',loadCornerPreview);
+document.getElementById('mark-corners').addEventListener('click',()=>{
+ cornerPoints=[];selectingCorners=true;drawCornerPage();
+ document.getElementById('corner-status').textContent='Tap four corners clockwise, starting at the top left.';
+});
+document.getElementById('clear-corners').addEventListener('click',()=>{
+ cornerPoints=[];selectingCorners=false;drawCornerPage();
+ document.getElementById('corner-status').textContent='Perspective correction cleared.';
+});
+cornerCanvas.addEventListener('pointerdown',event=>{
+ if(!selectingCorners||!cornerImage)return;
+ const rect=cornerCanvas.getBoundingClientRect();
+ const x=(event.clientX-rect.left-cornerCanvas.clientLeft)/cornerCanvas.clientWidth*cornerCanvas.width/cornerScaleX;
+ const y=(event.clientY-rect.top-cornerCanvas.clientTop)/cornerCanvas.clientHeight*cornerCanvas.height/cornerScaleY;
+ cornerPoints.push([Math.max(0,Math.min(cornerImage.naturalWidth-1,x)),Math.max(0,Math.min(cornerImage.naturalHeight-1,y))]);
+ drawCornerPage();
+ if(cornerPoints.length===4){selectingCorners=false;document.getElementById('corner-status').textContent='Four corners selected. Analyze page will rectify this planar region.';}
+ else document.getElementById('corner-status').textContent='Corner '+cornerPoints.length+' of 4 selected.';
+});
 form.addEventListener('submit',async(event)=>{
  event.preventDefault();const file=document.getElementById('camera-file').files[0]||document.getElementById('file').files[0];if(!file){document.getElementById('status').textContent='Choose a file or take a photo first.';return;}
  const button=document.getElementById('submit');button.disabled=true;const status=document.getElementById('status');status.textContent='Processing locally…';
  try{
   const body=new FormData();body.append('file',file);body.append('page',document.getElementById('page').value||'0');
+  if(selectingCorners){status.textContent='Select all four page corners or clear the selection first.';button.disabled=false;return;}
+  if(cornerPoints.length===4)body.append('corners_json',JSON.stringify(cornerPoints));
   const response=await fetch('/api/analyze',{method:'POST',body});const result=await response.json();
   if(!response.ok)throw new Error(result.detail||'Analysis failed');
   currentScene=result.scene;
@@ -297,7 +357,11 @@ def home() -> str:
 
 
 @app.post("/api/analyze")
-async def analyze(file: UploadFile = File(...), page: int = Form(0)) -> dict:
+async def analyze(
+    file: UploadFile = File(...),
+    page: int = Form(0),
+    corners_json: str | None = Form(None),
+) -> dict:
     filename = Path(file.filename or "upload.bin").name
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
@@ -308,36 +372,48 @@ async def analyze(file: UploadFile = File(...), page: int = Form(0)) -> dict:
     if len(contents) > 40 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File size limit is 40 MiB.")
     try:
+        corners = json.loads(corners_json) if corners_json else None
+        if corners is not None and not isinstance(corners, list):
+            raise ValueError("corners_json must be a JSON array of four [x, y] points.")
         with tempfile.TemporaryDirectory(prefix="scoretwin-") as directory:
             input_path = Path(directory) / ("source" + suffix)
             input_path.write_bytes(contents)
             gray = load_grayscale(input_path, page=page)
-            model = load_model(MODEL_PATH) if MODEL_PATH and Path(MODEL_PATH).exists() else get_default_model()
-            scene = analyze_array(gray, model=model)
-            if MODEL_PATH and Path(MODEL_PATH).exists():
-                scene["reproducibility"]["proposal_model"]["checkpoint_path"] = MODEL_PATH
-                scene["reproducibility"]["proposal_model"]["checkpoint_sha256"] = hashlib.sha256(Path(MODEL_PATH).read_bytes()).hexdigest()
-            source_sha256 = hashlib.sha256(contents).hexdigest()
+            bundle_dir = Path(directory) / "bundle"
+            model_path = Path(MODEL_PATH) if MODEL_PATH and Path(MODEL_PATH).exists() else None
+            analysis_result = process_file(
+                input_path,
+                bundle_dir,
+                page=page,
+                model_path=model_path,
+                rectify_corners=corners,
+            )
+            scene = analysis_result["scene"]
+            source_sha256 = analysis_result["source_sha256"]
             scene["source"] = {
+                **scene["source"],
                 "filename": filename,
-                "sha256": source_sha256,
-                "bytes": len(contents),
-                "page_index": page if suffix == ".pdf" else None,
                 "server_persisted": False,
             }
-            preview = gray
-            preview_scale = min(1.0, 1600.0 / max(gray.shape[1], gray.shape[0]))
+            analysis_image_path = analysis_result["analysis_raster_path"]
+            analysis_gray = (
+                load_grayscale(analysis_image_path)
+                if analysis_image_path
+                else gray
+            )
+            preview = analysis_gray
+            preview_scale = min(1.0, 1600.0 / max(analysis_gray.shape[1], analysis_gray.shape[0]))
             if preview_scale < 1.0:
                 preview = cv2.resize(
-                    gray,
-                    (max(1, int(round(gray.shape[1] * preview_scale))),
-                     max(1, int(round(gray.shape[0] * preview_scale)))),
+                    analysis_gray,
+                    (max(1, int(round(analysis_gray.shape[1] * preview_scale))),
+                     max(1, int(round(analysis_gray.shape[0] * preview_scale)))),
                     interpolation=cv2.INTER_AREA,
                 )
             success, encoded = cv2.imencode(".png", preview)
             if not success:
                 raise RuntimeError("Preview encoding failed.")
-            xml = build_musicxml(scene)
+            xml = Path(analysis_result["musicxml_path"]).read_text(encoding="utf-8")
             return {
                 "summary": {
                     "filename": filename,
@@ -357,8 +433,8 @@ async def analyze(file: UploadFile = File(...), page: int = Form(0)) -> dict:
                 "source_preview_png_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
                 "geometry_render_png_base64": _render_base64(
                     (
-                        max(1, int(round(gray.shape[0] * preview_scale))),
-                        max(1, int(round(gray.shape[1] * preview_scale))),
+                        max(1, int(round(analysis_gray.shape[0] * preview_scale))),
+                        max(1, int(round(analysis_gray.shape[1] * preview_scale))),
                     ),
                     scene,
                     scale=preview_scale,

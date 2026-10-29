@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 from . import __version__
-from .imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, rectify_global_skew, refine_notehead_geometry, staff_step_and_pitch
+from .imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch
 from .musicxml import build_musicxml
 from .proposal import get_default_model, load_model, predict_patch
 
@@ -492,6 +492,7 @@ def process_file(
     model_path: str | Path | None = None,
     rectify_skew: bool = False,
     max_skew_degrees: float = 12.0,
+    rectify_corners: list | None = None,
 ) -> dict:
     """Generate a self-contained analysis bundle and preserve input bytes unchanged."""
     source = Path(input_path)
@@ -503,16 +504,24 @@ def process_file(
     source_bytes = source.read_bytes()
     source_hash = hashlib.sha256(source_bytes).hexdigest()
     source_gray = load_grayscale(source, page=page)
-    rectification = rectify_global_skew(
-        source_gray,
-        max_abs_skew_degrees=max_skew_degrees,
-    ) if rectify_skew else None
+    if rectify_skew and rectify_corners is not None:
+        raise ValueError("Choose either global-skew rectification or page-corner rectification, not both.")
+    if rectify_corners is not None:
+        rectification = rectify_page_quadrilateral(source_gray, rectify_corners)
+    elif rectify_skew:
+        rectification = rectify_global_skew(source_gray, max_abs_skew_degrees=max_skew_degrees)
+    else:
+        rectification = None
     analysis_gray = rectification.image if rectification is not None else source_gray
     model = load_model(model_path) if model_path else get_default_model()
     scene = analyze_array(analysis_gray, model=model)
     residual_skew = scene["capture_diagnostics"]["estimated_staffline_angle_deg"]
     source_skew = (
-        rectification.estimated_skew_degrees if rectification is not None else residual_skew
+        rectification.estimated_skew_degrees
+        if rectification is not None and rectification.estimated_skew_degrees is not None
+        else estimate_global_skew_degrees(source_gray)
+        if rectification is not None
+        else residual_skew
     )
     source_to_analysis = (
         rectification.source_to_rectified if rectification is not None else np.eye(3, dtype=np.float64)
@@ -528,8 +537,16 @@ def process_file(
         "estimated_staffline_angle_deg": source_skew,
         "analysis_residual_staffline_angle_deg": residual_skew,
         "rotation_rectification_requested": bool(rectify_skew),
-        "rotation_rectified": bool(rectification.applied) if rectification is not None else False,
-        "perspective_rectified": False,
+        "rotation_rectified": bool(
+            rectification is not None
+            and rectification.applied
+            and rectification.method == "global_rotation"
+        ),
+        "perspective_rectification_requested": rectify_corners is not None,
+        "perspective_rectified": bool(
+            rectification is not None and rectification.method == "manual_page_quadrilateral"
+        ),
+        "rectification_method": rectification.method if rectification is not None else "none",
         "source_image_shape_px": [int(source_gray.shape[0]), int(source_gray.shape[1])],
         "analysis_image_shape_px": [int(analysis_gray.shape[0]), int(analysis_gray.shape[1])],
         "source_to_analysis": source_to_analysis.tolist(),
@@ -573,7 +590,7 @@ def process_file(
             raise IOError("Could not write the analysis raster.")
         capture_transform_path = output / "capture-transform.json"
         capture_transform_path.write_text(json.dumps({
-            "schema": "scoretwin-capture-rectification-0.1",
+            "schema": "scoretwin-capture-rectification-0.2",
             "source_sha256": source_hash,
             "source_image_shape_px": [int(source_gray.shape[0]), int(source_gray.shape[1])],
             "analysis_image_shape_px": [int(analysis_gray.shape[0]), int(analysis_gray.shape[1])],
