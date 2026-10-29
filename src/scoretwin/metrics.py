@@ -251,6 +251,81 @@ def residual_compressibility_metrics(reference_image: np.ndarray, candidate_imag
     }
 
 
+
+def mask_attack_sensitivity(reference_mask: np.ndarray, candidate_mask: np.ndarray) -> dict:
+    """Probe how common mask-only perturbations change IoU/F1.
+
+    The attacks are diagnostics, not claims that a particular perturbation improves
+    perceptual quality. They are useful for demonstrating why mask IoU alone cannot
+    establish pixel identity or symbolic correctness.
+    """
+    reference = np.asarray(reference_mask) > 0
+    candidate = np.asarray(candidate_mask) > 0
+    if reference.shape != candidate.shape or reference.ndim != 2:
+        raise ValueError("Reference and candidate masks must be same-shape 2D arrays.")
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    baseline = (candidate.astype(np.uint8) * 255)
+    variants = {
+        "baseline": baseline,
+        "one_pixel_dilation": cv2.dilate(baseline, kernel, iterations=1),
+        "one_pixel_erosion": cv2.erode(baseline, kernel, iterations=1),
+    }
+    blurred = cv2.GaussianBlur(baseline, (3, 3), 0.7)
+    variants["blur_then_threshold"] = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY)[1]
+
+    count, labels, stats, _centroids = cv2.connectedComponentsWithStats(
+        baseline, connectivity=8
+    )
+    non_background = [
+        (int(stats[index, cv2.CC_STAT_AREA]), index)
+        for index in range(1, count)
+        if int(stats[index, cv2.CC_STAT_AREA]) > 0
+    ]
+    if len(non_background) >= 2:
+        _smallest_area, smallest_index = min(non_background)
+        dropped = baseline.copy()
+        dropped[labels == smallest_index] = 0
+        variants["remove_smallest_component"] = dropped
+
+    results = {}
+    for name, mask in variants.items():
+        comparison = binary_mask_metrics(reference.astype(np.uint8), mask)
+        candidate_binary = np.asarray(mask) > 0
+        changed_pixels = int(np.count_nonzero(candidate_binary != candidate))
+        n_components, _component_labels, _component_stats, _centroids = cv2.connectedComponentsWithStats(
+            candidate_binary.astype(np.uint8), connectivity=8
+        )
+        results[name] = {
+            **comparison,
+            "changed_candidate_pixels": changed_pixels,
+            "foreground_component_count": max(0, int(n_components) - 1),
+        }
+
+    return {
+        "schema": "scoretwin-mask-redteam-0.1",
+        "baseline_iou": results["baseline"]["iou"],
+        "baseline_f1": results["baseline"]["f1"],
+        "attacks": results,
+        "unavailable_attacks": [] if "remove_smallest_component" in results else [
+            {
+                "name": "remove_smallest_component",
+                "reason": "candidate has fewer than two disconnected foreground components",
+            }
+        ],
+        "interpretation": [
+            "A high mask IoU can coexist with a missing small symbol when other foreground ink dominates the union.",
+            "Dilation can inflate strokes while retaining a high mask overlap; boundary distance and photometric comparisons are separate components.",
+            "Blur followed by thresholding may be invisible to a binary mask metric even though the grayscale image changed.",
+        ],
+        "defenses": [
+            "Report per-object notehead/stem precision and recall alongside mask IoU.",
+            "Report boundary-distance and photometric metrics at native analysis resolution.",
+            "Keep ambiguity/unknown-region coverage separate from the IoU of recognized ink.",
+            "Validate metric weights against blinded human identity judgments before aggregating into DID.",
+        ],
+    }
+
 def compare_idsr_components(
     reference_image: np.ndarray,
     candidate_image: np.ndarray,
@@ -305,6 +380,9 @@ def compare_idsr_components(
         raise ValueError("Provide both reference_mask and candidate_mask, or neither.")
     if reference_mask is not None:
         report["mask"] = binary_mask_metrics(reference_mask, candidate_mask)
+        report["mask_attack_sensitivity"] = mask_attack_sensitivity(reference_mask, candidate_mask)
+    else:
+        report["mask_attack_sensitivity"] = None
     return report
 
 
