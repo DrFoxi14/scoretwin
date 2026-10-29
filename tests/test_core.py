@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import xml.etree.ElementTree as ET
 
@@ -15,6 +16,7 @@ from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
 from scoretwin.proposal import load_model, predict_patch, save_model, train_proposal_model
 from scoretwin.synthetic import generate_synthetic_page
+from scoretwin.web import PAGE as WEB_PAGE, export_gltf
 
 
 def synthetic_staff() -> np.ndarray:
@@ -458,6 +460,37 @@ def test_gltf_export_embeds_a_page_texture_under_the_symbolic_geometry():
     plane_primitive = gltf["meshes"][plane["mesh"]]["primitives"][0]
     assert plane_primitive["attributes"]["TEXCOORD_0"] < len(gltf["accessors"])
     assert plane["extras"]["idsr"]["semantic_layer_z"] < 0
+
+
+def test_browser_gltf_endpoint_exports_texture_without_polluting_scene_json():
+    image = np.full((32, 48), 255, dtype=np.uint8)
+    cv2.line(image, (0, 12), (47, 12), 0, 1)
+    ok, encoded = cv2.imencode(".png", image)
+    assert ok
+    scene = {
+        "schema": "scoretwin-scene-0.1",
+        "image": {"width": 48, "height": 32},
+        "source": {"sha256": "source-hash"},
+        "primitives": [{
+            "id": "staff-line",
+            "kind": "staffline",
+            "geometry": {"x0_px": 0, "y0_px": 12, "x1_px": 47, "y1_px": 12},
+        }],
+        "notes": [],
+        "relations": [],
+    }
+    payload = {
+        "scene": scene,
+        "background_png_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
+    }
+    result = export_gltf(payload)
+    report = validate_embedded_gltf(result["gltf"])
+    gltf = __import__("json").loads(result["gltf"])
+    assert report["has_background_texture"] is True
+    assert gltf["extras"]["source"]["sha256"] == "source-hash"
+    assert "background_png_base64" not in gltf
+    assert "backgroundPreviewPngBase64=result.source_preview_png_base64" in WEB_PAGE
+    assert "background_png_base64:backgroundPreviewPngBase64" in WEB_PAGE
 
 
 def test_gltf_export_handles_an_empty_scene_with_a_valid_buffer():
