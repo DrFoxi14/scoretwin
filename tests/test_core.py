@@ -548,6 +548,23 @@ def test_pipeline_creates_bundle_and_preserves_source_bytes(tmp_path):
     assert (output_dir / "scene.json").exists()
     assert (output_dir / "overlay.png").exists()
     assert (output_dir / "geometry-render.png").exists()
+    assert (output_dir / "residual-offset255.png").exists()
+    assert (output_dir / "reconstructed-analysis.png").exists()
+    assert (output_dir / "identity-reconstruction.json").exists()
+    geometry_pixels = cv2.imread(str(output_dir / "geometry-render.png"), cv2.IMREAD_GRAYSCALE)
+    residual_pixels = cv2.imread(str(output_dir / "residual-offset255.png"), cv2.IMREAD_UNCHANGED)
+    reconstructed_pixels = cv2.imread(str(output_dir / "reconstructed-analysis.png"), cv2.IMREAD_GRAYSCALE)
+    assert residual_pixels.dtype == np.uint16
+    assert residual_pixels.shape == original.shape
+    reconstructed_math = geometry_pixels.astype(np.int32) + residual_pixels.astype(np.int32) - 255
+    assert reconstructed_math.min() >= 0 and reconstructed_math.max() <= 255
+    assert np.array_equal(reconstructed_math.astype(np.uint8), original)
+    assert np.array_equal(reconstructed_pixels, original)
+    identity_report = __import__("json").loads((output_dir / "identity-reconstruction.json").read_text(encoding="utf-8"))
+    assert identity_report["exact_pixel_reconstruction_verified"] is True
+    assert identity_report["mismatched_pixel_count"] == 0
+    assert identity_report["maximum_absolute_pixel_error"] == 0
+    assert saved_scene["identity_reconstruction"]["residual_file_sha256"]
     assert (output_dir / "scene.gltf").exists()
     gltf_text = (output_dir / "scene.gltf").read_text(encoding="utf-8")
     gltf_validation = validate_embedded_gltf(gltf_text)
