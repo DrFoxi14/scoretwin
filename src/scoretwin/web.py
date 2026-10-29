@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 import cv2
-from fastapi import Body, FastAPI, File, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 
 from .imaging import load_grayscale
@@ -43,7 +43,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <h1>ScoreTwin <span class="muted">/ IDSR</span></h1>
 <p class="muted">Geometry-first score digitization prototype. The source stays the identity anchor; symbolic proposals remain provisional.</p>
 <div class="panel">
-<form id="upload"><label for="file">Choose a score image or PDF</label><br><input id="file" name="file" type="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf" required><br><button id="submit" type="submit">Analyze page</button></form>
+<form id="upload"><label for="file">Choose a score image or PDF</label><br><input id="file" name="file" type="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf" required><br><label for="page">PDF page index (0-based; ignored for images)</label><br><input id="page" name="page" type="number" min="0" max="10000" value="0"><br><button id="submit" type="submit">Analyze page</button></form>
 <div id="status" class="status" role="status"></div>
 </div>
 <div id="results" hidden>
@@ -193,7 +193,7 @@ form.addEventListener('submit',async(event)=>{
  event.preventDefault();const file=document.getElementById('file').files[0];if(!file)return;
  const button=document.getElementById('submit');button.disabled=true;const status=document.getElementById('status');status.textContent='Processing locally…';
  try{
-  const body=new FormData();body.append('file',file);
+  const body=new FormData();body.append('file',file);body.append('page',document.getElementById('page').value||'0');
   const response=await fetch('/api/analyze',{method:'POST',body});const result=await response.json();
   if(!response.ok)throw new Error(result.detail||'Analysis failed');
   currentScene=result.scene;
@@ -285,7 +285,7 @@ def home() -> str:
 
 
 @app.post("/api/analyze")
-async def analyze(file: UploadFile = File(...)) -> dict:
+async def analyze(file: UploadFile = File(...), page: int = Form(0)) -> dict:
     filename = Path(file.filename or "upload.bin").name
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
@@ -299,7 +299,7 @@ async def analyze(file: UploadFile = File(...)) -> dict:
         with tempfile.TemporaryDirectory(prefix="scoretwin-") as directory:
             input_path = Path(directory) / ("source" + suffix)
             input_path.write_bytes(contents)
-            gray = load_grayscale(input_path)
+            gray = load_grayscale(input_path, page=page)
             model = load_model(MODEL_PATH) if MODEL_PATH and Path(MODEL_PATH).exists() else get_default_model()
             scene = analyze_array(gray, model=model)
             source_sha256 = hashlib.sha256(contents).hexdigest()
@@ -307,7 +307,7 @@ async def analyze(file: UploadFile = File(...)) -> dict:
                 "filename": filename,
                 "sha256": source_sha256,
                 "bytes": len(contents),
-                "page_index": 0 if suffix == ".pdf" else None,
+                "page_index": page if suffix == ".pdf" else None,
                 "server_persisted": False,
             }
             preview = gray
@@ -326,6 +326,7 @@ async def analyze(file: UploadFile = File(...)) -> dict:
             return {
                 "summary": {
                     "filename": filename,
+                    "page_index": page if suffix == ".pdf" else None,
                     "source_sha256": source_sha256,
                     "width": scene["image"]["width"],
                     "height": scene["image"]["height"],
