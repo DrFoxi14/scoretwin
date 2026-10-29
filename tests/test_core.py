@@ -8,7 +8,7 @@ import numpy as np
 
 from scoretwin.benchmark import evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
-from scoretwin.imaging import detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, refine_notehead_geometry, staff_step_and_pitch
+from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, refine_notehead_geometry, staff_step_and_pitch
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
 from scoretwin.proposal import load_model, predict_patch, save_model, train_proposal_model
@@ -43,6 +43,25 @@ def test_notehead_components_are_proposed_even_across_staff_lines():
     assert len(candidates) >= len(truth) - 2
     assert all(candidate["bbox"][2] > 0 and candidate["bbox"][3] > 0 for candidate in candidates)
     assert all("crop" in candidate for candidate in candidates)
+
+
+def test_barline_detector_does_not_confuse_stems_with_barline():
+    gray = synthetic_staff()
+    staffs, binary, _staff_mask = detect_staff_systems(gray)
+    assert detect_barlines(binary, staffs[0]) == []
+
+    image_with_barline = gray.copy()
+    cv2.line(
+        image_with_barline,
+        (300, staffs[0].top),
+        (300, staffs[0].bottom),
+        0,
+        1,
+        cv2.LINE_AA,
+    )
+    _staffs, binary_with_barline, _mask = detect_staff_systems(image_with_barline)
+    detected = detect_barlines(binary_with_barline, staffs[0])
+    assert any(abs(x - 300) <= 1 for x in detected)
 
 
 def test_detects_long_vertical_stem_candidates():
