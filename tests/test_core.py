@@ -12,7 +12,7 @@ from scoretwin.benchmark import evaluate_perspective_capture, evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
 from scoretwin.benchmark_photo_smoke import evaluate_photo_smoke
 from scoretwin.gltf_export import build_gltf, validate_embedded_gltf
-from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
+from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
 from scoretwin.proposal import load_model, predict_patch, save_model, train_proposal_model
@@ -615,6 +615,49 @@ def test_pipeline_creates_bundle_and_preserves_source_bytes(tmp_path):
     assert int(geometry_render.min()) < 255
     assert (output_dir / "provisional.musicxml").exists()
     ET.parse(output_dir / "provisional.musicxml")
+
+
+def test_color_source_residual_reconstructs_every_bgr_channel(tmp_path):
+    gray = synthetic_staff()
+    channels = [
+        gray,
+        np.clip(gray.astype(np.int16) * 3 // 4 + 25, 0, 255).astype(np.uint8),
+        np.clip(gray.astype(np.int16) // 2 + 60, 0, 255).astype(np.uint8),
+    ]
+    color_bgr = np.stack(channels, axis=2)
+    source_path = tmp_path / "color-score.png"
+    assert cv2.imwrite(str(source_path), color_bgr)
+    source_bytes = source_path.read_bytes()
+    loaded_pixels = load_pixel_array(source_path)
+    assert loaded_pixels.shape == color_bgr.shape
+    assert np.array_equal(loaded_pixels, color_bgr)
+
+    output_dir = tmp_path / "color-bundle"
+    result = process_file(source_path, output_dir)
+    analysis_pixels = cv2.imread(result["analysis_pixels_path"], cv2.IMREAD_UNCHANGED)
+    geometry = cv2.imread(result["geometry_render_path"], cv2.IMREAD_GRAYSCALE)
+    residual = cv2.imread(result["residual_path"], cv2.IMREAD_UNCHANGED)
+    reconstructed = cv2.imread(result["reconstructed_raster_path"], cv2.IMREAD_UNCHANGED)
+    report = result["identity_reconstruction"]
+
+    assert result["source_hash_verified"] is True
+    assert (output_dir / "source-original.png").read_bytes() == source_bytes
+    assert analysis_pixels.shape == color_bgr.shape
+    assert np.array_equal(analysis_pixels, color_bgr)
+    assert residual.dtype == np.uint16 and residual.shape == color_bgr.shape
+    geometry_bgr = cv2.cvtColor(geometry, cv2.COLOR_GRAY2BGR)
+    recomposed = geometry_bgr.astype(np.int32) + residual.astype(np.int32) - 255
+    assert recomposed.min() >= 0 and recomposed.max() <= 255
+    assert np.array_equal(recomposed.astype(np.uint8), color_bgr)
+    assert np.array_equal(reconstructed, color_bgr)
+    assert report["analysis_raster_encoding"] == "uint8 3-channel BGR analysis raster"
+    assert report["exact_pixel_reconstruction_verified"] is True
+    assert report["mismatched_pixel_count"] == 0
+    assert report["channel_value_count"] == int(color_bgr.size)
+    assert report["maximum_absolute_pixel_error"] == 0
+    gltf = __import__("json").loads((output_dir / "scene.gltf").read_text(encoding="utf-8"))
+    assert gltf["extras"]["background_texture_embedded"] is True
+    assert gltf["extras"]["identity_reconstruction"]["analysis_raster_encoding"] == report["analysis_raster_encoding"]
 
 
 def test_pipeline_can_analyze_rectified_raster_and_keep_source_coordinates(tmp_path):
