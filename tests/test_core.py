@@ -196,6 +196,29 @@ def test_musicxml_exports_stacked_noteheads_as_review_chords():
     assert "Chord membership was inferred geometrically" in marker_text
 
 
+def test_musicxml_duration_hypothesis_is_not_mistaken_for_exported_duration():
+    scene = {
+        "staffs": [{"lines": [10, 20, 30, 40, 50], "spacing": 10, "barlines": []}],
+        "notes": [{
+            "id": "n1",
+            "staff_index": 0,
+            "center": [70.0, 40.0],
+            "pitch": {"step": "E", "octave": 4},
+            "duration_hypothesis": {
+                "candidate": "half_note_candidate",
+                "confidence_calibrated": False,
+                "used_for_musicxml_duration": False,
+            },
+        }],
+    }
+    root = ET.fromstring(build_musicxml(scene))
+    note = root.find("./part/measure/note")
+    assert note.find("type").text == "quarter"
+    marker_text = note.find("./notations/other-notation").text
+    assert "Duration hypothesis: half_note_candidate" in marker_text
+    assert "not used for the exported duration" in marker_text
+
+
 def test_empty_scene_still_has_a_measure():
     root = ET.fromstring(build_musicxml({"staffs": [], "notes": []}))
     assert root.find("./part/measure") is not None
@@ -246,6 +269,9 @@ def test_pipeline_links_detected_stems_to_noteheads():
     assert len(stem_relations) >= 2
     stem_note_ids = {relation["target"] for relation in stem_relations}
     assert stem_note_ids.issubset({note["id"] for note in scene["notes"]})
+    for note in scene["notes"]:
+        assert note["duration_hypothesis"]["confidence_calibrated"] is False
+        assert note["duration_hypothesis"]["used_for_musicxml_duration"] is False
 
 
 def test_analysis_has_explicit_unknown_or_no_staff_warning():
