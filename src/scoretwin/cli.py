@@ -11,6 +11,7 @@ import cv2
 
 from .benchmark import evaluate_perspective_capture, evaluate_synthetic
 from .benchmark_manifest import evaluate_manifest
+from .benchmark_photo_smoke import evaluate_photo_smoke
 from .imaging import load_grayscale, rectify_global_skew, rectify_page_quadrilateral
 from .pipeline import process_file
 from .proposal import save_model, train_proposal_model
@@ -79,6 +80,14 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--tolerance-sp", type=float, default=0.35)
     manifest.add_argument("--bootstrap-samples", type=int, default=1000)
     manifest.add_argument("--bootstrap-seed", type=int, default=20261029)
+
+    photo_smoke = commands.add_parser(
+        "evaluate-photo-smoke",
+        help="Run an unlabeled smoke evaluation on supplied camera/scan pages",
+    )
+    photo_smoke.add_argument("--manifest", type=Path, required=True)
+    photo_smoke.add_argument("--model", type=Path, default=None)
+    photo_smoke.add_argument("--out", type=Path, default=Path("photo-smoke-evaluation.json"))
 
     rectify = commands.add_parser(
         "rectify-preview",
@@ -193,6 +202,16 @@ def main() -> None:
             "recall": result["recall"],
             "f1": result["f1"],
             "confidence_intervals": result["precision_recall_f1_bootstrap_95_ci"],
+        }, indent=2, ensure_ascii=False))
+    elif args.command == "evaluate-photo-smoke":
+        result = evaluate_photo_smoke(args.manifest, model_path=args.model)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(json.dumps({
+            "report_path": str(args.out),
+            "pages_n": result["pages_n"],
+            "pages_source_bytes_preserved_n": result["pages_source_bytes_preserved_n"],
+            "data_status": result["data_status"],
         }, indent=2, ensure_ascii=False))
     elif args.command == "rectify-preview":
         source_bytes = args.input.read_bytes()
