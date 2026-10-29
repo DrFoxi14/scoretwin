@@ -35,7 +35,7 @@ button{background:#b7f36b;color:#151a12;font-weight:700;border:0;border-radius:9
 input{margin:12px 0}img{width:100%;height:auto;border-radius:8px;border:1px solid #303949}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#ced7e5}a{color:#b7f36b}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.editor-row{display:grid;grid-template-columns:minmax(170px,1.6fr) repeat(5,minmax(82px,1fr));gap:8px;align-items:center;border-top:1px solid #303949;padding:10px 0}
+.editor-row{display:grid;grid-template-columns:minmax(150px,1.5fr) repeat(6,minmax(74px,1fr));gap:7px;align-items:center;border-top:1px solid #303949;padding:10px 0}
 .editor-row span{overflow-wrap:anywhere;color:#d8deea}
 .editor-row select{min-width:0;width:100%;background:#10131a;color:#edf0f6;padding:7px 5px;border:1px solid #46536a;border-radius:7px}
 canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px solid #303949;touch-action:none}
@@ -428,7 +428,26 @@ function buildEditor(){
     document.getElementById('status').textContent=error.message||String(error);
    }
   });
-  row.append(title,pitchSelect,accidentalSelect,durationSelect,voiceSelect,onsetInput);
+  const removeButton=document.createElement('button');
+  removeButton.type='button';removeButton.textContent='Remove';
+  removeButton.title='Remove this note proposal from the editable scene; source pixels remain unchanged.';
+  removeButton.addEventListener('click',()=>{
+   if(!window.confirm('Remove this note proposal from the editable scene? The source image is not changed and Reset edits can restore the original proposals.'))return;
+   const noteId=String(note.id),stemIds=new Set(note.stem_ids||[]);
+   currentScene.notes=currentScene.notes.filter(item=>String(item.id)!==noteId);
+   currentScene.relations=(currentScene.relations||[]).filter(relation=>String(relation.source)!==noteId&&String(relation.target)!==noteId);
+   currentScene.primitives=(currentScene.primitives||[]).filter(primitive=>String(primitive.id)!==noteId);
+   for(const stemId of stemIds){
+    const stillUsed=currentScene.relations.some(relation=>relation.type==='stem_of'&&String(relation.source)===String(stemId));
+    if(!stillUsed)currentScene.primitives=currentScene.primitives.filter(primitive=>String(primitive.id)!==String(stemId));
+   }
+   currentScene.note_count=currentScene.notes.length;
+   currentScene.user_edit_history=currentScene.user_edit_history||[];
+   currentScene.user_edit_history.push({operation:'remove_note_proposal',note_id:noteId,source_pixels_changed:false});
+   buildEditor();drawPage();draw3d();
+   document.getElementById('status').textContent='Note proposal removed from the editable scene. The source image and its hash are unchanged.';
+  });
+  row.append(title,pitchSelect,accidentalSelect,durationSelect,voiceSelect,onsetInput,removeButton);
   holder.appendChild(row);
  });
 }const form=document.getElementById('upload');
