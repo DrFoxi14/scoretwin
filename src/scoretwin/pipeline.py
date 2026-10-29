@@ -10,7 +10,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .imaging import detect_barlines, detect_staff_systems, extract_notehead_candidates, load_grayscale, staff_step_and_pitch
+from .imaging import detect_barlines, detect_staff_systems, extract_notehead_candidates, load_grayscale, refine_notehead_geometry, staff_step_and_pitch
 from .musicxml import build_musicxml
 from .proposal import get_default_model, load_model, predict_patch
 
@@ -39,6 +39,26 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
     candidates = extract_notehead_candidates(gray, binary, staff_mask, staffs)
     classified = _classify_candidates(candidates, model or get_default_model())
 
+    # Apply bounded local geometry refinement only to candidates already classified
+    # as noteheads. This is analysis-by-synthesis at proposal scale, not a global OMR.
+    image_height, image_width = gray.shape
+    for item in classified:
+        if item["class"] not in ("filled_head", "hollow_head"):
+            continue
+        staff = staffs[int(item["staff_index"])]
+        initial_center = [float(item["center"][0]), float(item["center"][1])]
+        fit = refine_notehead_geometry(
+            gray, binary, staff_mask, initial_center, float(staff.spacing), item["class"]
+        )
+        item["geometry_refinement"] = fit
+        if fit["accepted"]:
+            center_x, center_y = fit["center"]
+            box_width, box_height = [int(v) for v in item["bbox"][2:4]]
+            box_x = max(0, min(image_width - box_width, int(round(center_x - box_width / 2.0))))
+            box_y = max(0, min(image_height - box_height, int(round(center_y - box_height / 2.0))))
+            item["center"] = [float(center_x), float(center_y)]
+            item["bbox"] = [box_x, box_y, box_width, box_height]
+
     staff_objects = []
     for staff in staffs:
         barlines = detect_barlines(binary, staff)
@@ -60,6 +80,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
                 "pitch": {"step": letter, "octave": octave},
                 "diatonic_step_from_bottom_line": step,
                 "pitch_confidence": item["confidence"],
+                "geometry_refinement": item.get("geometry_refinement"),
                 "duration": None,
                 "uncertainty": ["key_signature", "accidental", "duration", "voice", "instrument_or_part", "measure_assignment"],
             })
@@ -217,6 +238,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
         "Pitch proposals assume treble clef and a C-major/no-accidental interpretation; key signatures and accidentals are not yet inferred.",
         "Durations, voice assignments, instrument mapping and full score structure remain unresolved and are marked for review in MusicXML.",
         "The synthetic model's confidence is not calibrated confidence on real manuscripts or photographs.",
+        "Geometry-fit scores are local template-correlation values, not probabilities; rejected fits leave the original proposal unchanged.",
     ])
     return {
         "schema": "scoretwin-scene-0.1",
