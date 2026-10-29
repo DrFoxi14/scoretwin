@@ -232,6 +232,22 @@ def test_pipeline_creates_bundle_and_preserves_source_bytes(tmp_path):
     ET.parse(output_dir / "provisional.musicxml")
 
 
+def test_pipeline_links_detected_stems_to_noteheads():
+    model = {
+        "weights": np.zeros((16 * 16 + 1, 3), dtype=np.float32),
+        "labels": ("filled_head", "hollow_head", "artifact"),
+    }
+    model["weights"][0, 0] = 6.0
+    scene = analyze_array(synthetic_staff(), model=model)
+    assert scene["note_count"] >= 2
+    stem_primitives = [primitive for primitive in scene["primitives"] if primitive["kind"] == "stem"]
+    stem_relations = [relation for relation in scene["relations"] if relation["type"] == "stem_of"]
+    assert len(stem_primitives) >= 2
+    assert len(stem_relations) >= 2
+    stem_note_ids = {relation["target"] for relation in stem_relations}
+    assert stem_note_ids.issubset({note["id"] for note in scene["notes"]})
+
+
 def test_analysis_has_explicit_unknown_or_no_staff_warning():
     image = np.full((120, 180), 250, dtype=np.uint8)
     scene = analyze_array(image)
