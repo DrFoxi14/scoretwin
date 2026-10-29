@@ -392,6 +392,44 @@ def test_musicxml_exports_editable_duration_ticks_accidentals_and_voices():
     assert measure.find("./backup/duration").text == "8"
 
 
+def test_musicxml_serializes_explicit_onset_ticks_with_forward_gaps():
+    scene = {
+        "schema": "scoretwin-scene-0.1",
+        "timing_units": "ticks_16_per_quarter",
+        "staffs": [{
+            "part_id": "p1", "system_index": 0, "staff_number": 1,
+            "lines": [10, 20, 30, 40, 50], "spacing": 10, "barlines": [],
+        }],
+        "notes": [
+            {
+                "id": "first",
+                "staff_index": 0,
+                "center": [20.0, 40.0],
+                "pitch": {"step": "E", "octave": 4},
+                "onset_ticks": 0,
+                "duration_ticks": 8,
+                "type": "eighth",
+                "voice": 1,
+            },
+            {
+                "id": "after-rest",
+                "staff_index": 0,
+                "center": [60.0, 30.0],
+                "pitch": {"step": "G", "octave": 4},
+                "onset_ticks": 24,
+                "duration_ticks": 16,
+                "type": "quarter",
+                "voice": 1,
+            },
+        ],
+    }
+    root = ET.fromstring(build_musicxml(scene))
+    measure = root.find("./part/measure")
+    assert root.find(".//divisions").text == "16"
+    assert [note.find("duration").text for note in measure.findall("note")] == ["8", "16"]
+    assert measure.find("./forward/duration").text == "16"
+
+
 def test_musicxml_tick_mode_preserves_legacy_quarter_unit_values():
     scene = {
         "schema": "scoretwin-scene-0.1",
@@ -424,6 +462,9 @@ def test_browser_editor_exposes_accidental_duration_and_voice_controls():
     assert "note.duration_ticks=durationTicks[value]" in WEB_PAGE
     assert "note.pitch.alter=accidentalAlter[value]" in WEB_PAGE
     assert "note.voice=Number(value)" in WEB_PAGE
+    assert "function assignExplicitOnset(note,requestedOnset)" in WEB_PAGE
+    assert "item.onset_ticks=plan.onset" in WEB_PAGE
+    assert "onset_ticks" in WEB_PAGE
 
 
 def test_musicxml_exports_stacked_noteheads_as_review_chords():
