@@ -56,6 +56,18 @@ Validate the emitted 3D scene independently:
 
     scoretwin validate-gltf ./runs/score/scene.gltf
 
+Compare a reference raster with a candidate render. The command reports a component vector, not an uncalibrated scalar DID:
+
+    scoretwin compare ./reference.png ./candidate.png --out ./runs/compare.json
+
+Add reviewed scene JSONs to score note geometry and typed relationship comparisons, using the reference staff-space calibration:
+
+    scoretwin compare ./reference.png ./candidate.png --reference-scene ./reference-scene.json --candidate-scene ./candidate-scene.json --staff-space-px 16 --out ./runs/compare.json
+
+The reference and candidate images must use the same dimensions, coordinate frame and decoded channel representation. With rectified scenes, compare the corresponding \`analysis-raster-pixels.png\` outputs, not the original unrectified photos. Optional masks can be added with \`--reference-mask\` and \`--candidate-mask\`. The report includes photometric exactness/MAE/MSE/PSNR, zlib residual-size bits per pixel, optional mask IoU/F1, center precision/recall/F1 and staff-space localization, pitch accuracy on labelled matches, and typed-relation F1. The zlib figure is a codec-specific residual-compressibility proxy, **not** a model-based MDL result.
+
+The report intentionally leaves \`aggregate_did\` unset. A weighted scalar must wait for a preregistered human-calibration study; choosing arbitrary weights would look quantitative while hiding an unvalidated value judgment.
+
 Analyze a PDF page (zero-indexed page number):
 
     scoretwin analyze ./score.pdf --page 0 --out ./runs/score
