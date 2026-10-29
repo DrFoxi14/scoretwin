@@ -43,7 +43,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <h1>ScoreTwin <span class="muted">/ IDSR</span></h1>
 <p class="muted">Geometry-first score digitization prototype. The source stays the identity anchor; symbolic proposals remain provisional.</p>
 <div class="panel">
-<form id="upload"><label for="file">Choose a score image or PDF</label><br><input id="file" name="file" type="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf" required><br><label for="page">PDF page index (0-based; ignored for images)</label><br><input id="page" name="page" type="number" min="0" max="10000" value="0"><br><button id="submit" type="submit">Analyze page</button></form>
+<form id="upload"><label for="file">Choose an image or PDF</label><br><input id="file" name="file" type="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf"><br><label for="camera-file">Or take a photo with the phone camera</label><br><input id="camera-file" name="camera-file" type="file" accept="image/*" capture="environment"><br><label for="page">PDF page index (0-based; ignored for images)</label><br><input id="page" name="page" type="number" min="0" max="10000" value="0"><br><button id="submit" type="submit">Analyze page</button></form>
 <div id="status" class="status" role="status"></div>
 </div>
 <div id="results" hidden>
@@ -190,7 +190,7 @@ function buildEditor(){
 }
 const form=document.getElementById('upload');
 form.addEventListener('submit',async(event)=>{
- event.preventDefault();const file=document.getElementById('file').files[0];if(!file)return;
+ event.preventDefault();const file=document.getElementById('camera-file').files[0]||document.getElementById('file').files[0];if(!file){document.getElementById('status').textContent='Choose a file or take a photo first.';return;}
  const button=document.getElementById('submit');button.disabled=true;const status=document.getElementById('status');status.textContent='Processing locally…';
  try{
   const body=new FormData();body.append('file',file);body.append('page',document.getElementById('page').value||'0');
