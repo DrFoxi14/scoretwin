@@ -78,6 +78,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
                 "bbox": item["bbox"],
                 "center": item["center"],
                 "pitch": {"step": letter, "octave": octave},
+                "shape_class": item["class"],
                 "diatonic_step_from_bottom_line": step,
                 "pitch_confidence": item["confidence"],
                 "geometry_refinement": item.get("geometry_refinement"),
@@ -261,6 +262,52 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
     }
 
 
+def render_geometry_scene(shape: tuple[int, int], scene: dict) -> np.ndarray:
+    """Render currently modeled primitives on a clean page-sized canvas.
+
+    This is an inspectable structural render, not yet a pixel-identical reconstruction:
+    stems, beams, text, slurs, dynamics, paper texture and unknown glyph shapes may be
+    absent. The source raster must be retained separately as the lossless identity anchor.
+    """
+    height, width = int(shape[0]), int(shape[1])
+    if height < 1 or width < 1 or height * width > 80_000_000:
+        raise ValueError("Invalid or excessively large geometry-render dimensions.")
+    image = np.full((height, width), 255, dtype=np.uint8)
+
+    for staff in scene.get("staffs", []):
+        for y_value in staff.get("lines", []):
+            y = int(round(float(y_value)))
+            cv2.line(image, (0, y), (width - 1, y), 20, 1, cv2.LINE_AA)
+        for x_value in staff.get("barlines", []):
+            x = int(round(float(x_value)))
+            cv2.line(
+                image, (x, int(staff["top"])), (x, int(staff["bottom"])),
+                20, 1, cv2.LINE_AA,
+            )
+
+    for note in scene.get("notes", []):
+        cx, cy = [float(value) for value in note["center"]]
+        bbox = [float(value) for value in note["bbox"]]
+        rx = max(2, int(round(bbox[2] / 2.0)))
+        ry = max(2, int(round(bbox[3] / 2.0)))
+        fit = note.get("geometry_refinement") or {}
+        angle = float(fit.get("rotation_deg", 0.0)) if fit.get("accepted") else 0.0
+        class_name = note.get("shape_class", "filled_head")
+        thickness = -1 if class_name == "filled_head" else max(1, int(round(ry * 0.35)))
+        cv2.ellipse(
+            image, (int(round(cx)), int(round(cy))), (rx, ry), angle,
+            0, 360, 20, thickness, cv2.LINE_AA,
+        )
+
+    # Unknown regions are outlined lightly rather than silently omitted.
+    for item in scene.get("unknown_objects", []):
+        x, y, box_width, box_height = [int(value) for value in item["bbox"]]
+        cv2.rectangle(
+            image, (x, y), (x + box_width, y + box_height), 160, 1, cv2.LINE_AA
+        )
+    return image
+
+
 def render_overlay(gray: np.ndarray, scene: dict) -> np.ndarray:
     overlay = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     for staff in scene.get("staffs", []):
@@ -312,10 +359,15 @@ def process_file(
     scene["source"]["preserved_file"] = preserved_name
 
     overlay = render_overlay(gray, scene)
+    geometry_render = render_geometry_scene(gray.shape, scene)
     ok, encoded = cv2.imencode(".png", overlay)
     if not ok:
         raise RuntimeError("Could not encode diagnostic overlay.")
     (output / "overlay.png").write_bytes(encoded.tobytes())
+    render_ok, geometry_encoded = cv2.imencode(".png", geometry_render)
+    if not render_ok:
+        raise RuntimeError("Could not encode geometry render.")
+    (output / "geometry-render.png").write_bytes(geometry_encoded.tobytes())
 
     (output / "scene.json").write_text(json.dumps(scene, indent=2, ensure_ascii=False), encoding="utf-8")
     musicxml = build_musicxml(scene)
@@ -330,6 +382,7 @@ def process_file(
         "scene": scene,
         "musicxml_path": str(output / "provisional.musicxml"),
         "overlay_path": str(output / "overlay.png"),
+        "geometry_render_path": str(output / "geometry-render.png"),
         "source_hash_verified": True,
         "source_sha256": source_hash,
     }
