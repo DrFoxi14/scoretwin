@@ -20,13 +20,38 @@ from .proposal import get_default_model, load_model, predict_patch
 def _classify_candidates(candidates: list[dict], model: dict) -> list[dict]:
     classified = []
     for candidate in candidates:
-        scores = predict_patch(model, candidate.pop("crop"))
+        crop = np.asarray(candidate.pop("crop"), dtype=np.uint8)
+        scores = predict_patch(model, crop)
         label = max(scores, key=scores.get)
         confidence = float(scores[label])
         if confidence < 0.48:
             label = "unknown"
-        item = {**candidate, "class": label, "confidence": round(confidence, 4),
-                "class_probabilities": {key: round(float(value), 4) for key, value in scores.items()}}
+
+        contrast_std = float(np.std(crop)) if crop.size else 0.0
+        laplacian_variance = (
+            float(cv2.Laplacian(crop, cv2.CV_64F).var()) if crop.size else 0.0
+        )
+        if contrast_std < 12.0:
+            unknown_reason = "low_local_contrast"
+        elif laplacian_variance < 4.0:
+            unknown_reason = "low_local_sharpness_or_blur"
+        elif label in ("artifact", "unknown"):
+            unknown_reason = "non_modeled_mark_or_classifier_uncertain"
+        else:
+            unknown_reason = None
+
+        item = {
+            **candidate,
+            "class": label,
+            "confidence": round(confidence, 4),
+            "class_probabilities": {key: round(float(value), 4) for key, value in scores.items()},
+            "image_quality_diagnostics": {
+                "crop_grayscale_std": round(contrast_std, 4),
+                "crop_laplacian_variance": round(laplacian_variance, 4),
+                "thresholds_calibrated": False,
+            },
+            "unknown_reason": unknown_reason,
+        }
         classified.append(item)
     return classified
 
@@ -104,7 +129,8 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
                 "center": item["center"],
                 "class": item["class"],
                 "confidence": item["confidence"],
-                "reason": "Candidate was not classified as either modeled notehead type; it may be non-note ink or an unresolved symbol.",
+                "reason": item.get("unknown_reason") or "Non-note candidate requiring review.",
+                "image_quality_diagnostics": item.get("image_quality_diagnostics", {}),
             })
 
     # Build a provenance-aware scene graph in observed pixel coordinates.
