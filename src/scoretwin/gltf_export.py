@@ -184,7 +184,11 @@ def _rectangle_outline(
         indices_all.append(indices + offset)
     return np.concatenate(vertices_all), np.concatenate(indices_all)
 
-def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
+def build_gltf(
+    scene: dict,
+    layer_separation: float = 6.0,
+    background_png: bytes | None = None,
+) -> str:
     """Serialize supported scene primitives to a self-contained glTF 2.0 file.
 
     Supported geometry: staff lines, barlines, noteheads, linked stems and unknown
@@ -223,6 +227,37 @@ def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
     meshes: list[dict] = []
     nodes: list[dict] = []
     skipped: list[dict] = []
+    materials = list(_MATERIALS)
+    embedded_image: dict | None = None
+    embedded_texture: dict | None = None
+    background_resolution: list[int] | None = None
+
+    if background_png is not None:
+        if not isinstance(background_png, bytes) or not background_png.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError("background_png must contain PNG-encoded analysis-raster bytes.")
+        if len(background_png) > 80 * 1024 * 1024 or len(background_png) < 24:
+            raise ValueError("Background texture size is invalid or exceeds 80 MiB.")
+        texture_width, texture_height = struct.unpack(">II", background_png[16:24])
+        if texture_width < 1 or texture_height < 1 or texture_width * texture_height > 80_000_000:
+            raise ValueError("Background texture dimensions are invalid or exceed 80 megapixels.")
+        background_resolution = [int(texture_width), int(texture_height)]
+        embedded_image = {
+            "name": "analysis-raster",
+            "mimeType": "image/png",
+            "uri": "data:image/png;base64," + base64.b64encode(background_png).decode("ascii"),
+        }
+        embedded_texture = {"sampler": 0, "source": 0}
+        materials.append({
+            "name": "analysis-raster-unlit",
+            "pbrMetallicRoughness": {
+                "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+                "baseColorTexture": {"index": 0},
+                "metallicFactor": 0.0,
+                "roughnessFactor": 1.0,
+            },
+            "doubleSided": True,
+            "extensions": {"KHR_materials_unlit": {}},
+        })
 
     material_by_kind = {
         "staffline": 0,
@@ -416,6 +451,52 @@ def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
         else:
             skipped.append({"id": primitive_id, "reason": f"unsupported_kind:{kind}"})
 
+    if background_png is not None:
+        # Place the raster texture just behind the estimated symbolic geometry.
+        # UVs remain page-aligned even if the embedded preview was downscaled.
+        plane_vertices, plane_indices = _quad(0.0, 0.0, page_width, page_height, -0.1, page_height)
+        position_ref = _position_accessor(plane_vertices)
+        texcoords = np.asarray([[0, 0], [1, 0], [1, 1], [0, 1]], dtype="<f4")
+        texcoord_view = _buffer_view(texcoords.tobytes(), 34962)
+        accessors.append({
+            "bufferView": texcoord_view,
+            "byteOffset": 0,
+            "componentType": 5126,
+            "count": 4,
+            "type": "VEC2",
+            "min": [0.0, 0.0],
+            "max": [1.0, 1.0],
+        })
+        texcoord_ref = len(accessors) - 1
+        index_ref = _index_accessor(plane_indices)
+        background_mesh_index = len(meshes)
+        meshes.append({
+            "name": "analysis-raster-plane",
+            "primitives": [{
+                "attributes": {"POSITION": position_ref, "TEXCOORD_0": texcoord_ref},
+                "indices": index_ref,
+                "material": len(materials) - 1,
+                "mode": 4,
+            }],
+            "extras": {
+                "idsr_kind": "analysis_raster_texture",
+                "coordinate_units": "source_pixels",
+            },
+        })
+        nodes.append({
+            "name": "analysis-raster-plane",
+            "mesh": background_mesh_index,
+            "translation": [0.0, 0.0, 0.0],
+            "extras": {
+                "idsr": {
+                    "kind": "analysis_raster_texture",
+                    "semantic_layer_z": -0.1,
+                    "texture_resolution_px": background_resolution,
+                    "identity_note": "This is a PNG encoding of the decoded analysis raster. The original input file is preserved separately byte-for-byte.",
+                }
+            },
+        })
+
     while len(binary) % 4:
         binary.append(0)
     # glTF buffers require a positive byteLength even when the scene has no mesh data.
@@ -427,7 +508,7 @@ def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
         "scenes": [{"name": "ScoreTwin IDSR scene", "nodes": list(range(len(nodes)))}],
         "nodes": nodes,
         "meshes": meshes,
-        "materials": _MATERIALS,
+        "materials": materials,
         "buffers": [{
             "byteLength": len(binary),
             "uri": "data:application/octet-stream;base64," + base64.b64encode(binary).decode("ascii"),
@@ -436,6 +517,12 @@ def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
         "accessors": accessors,
         "extras": {
             "schema": "scoretwin-gltf-scene-0.1",
+            "background_texture_embedded": background_png is not None,
+            "background_texture_resolution_px": background_resolution,
+            "background_texture_resampled_to_analysis_frame": (
+                background_resolution != [int(page_width), int(page_height)]
+                if background_resolution is not None else False
+            ),
             "source_schema": scene.get("schema"),
             "image": {"width_px": page_width, "height_px": page_height},
             "coordinate_frame": scene.get("coordinate_frame", "source_raster_pixel_centers"),
@@ -447,9 +534,20 @@ def build_gltf(scene: dict, layer_separation: float = 6.0) -> str:
             "capture_diagnostics": scene.get("capture_diagnostics", {}),
             "unsupported_primitive_count": len(skipped),
             "unsupported_primitives": skipped[:100],
-            "primitive_count": len(nodes),
+            "primitive_count": len(nodes) - (1 if background_png is not None else 0),
+            "node_count_including_background_plane": len(nodes),
         },
     }
+    if background_png is not None:
+        gltf["images"] = [embedded_image]
+        gltf["textures"] = [embedded_texture]
+        gltf["samplers"] = [{
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 33071,
+            "wrapT": 33071,
+        }]
+        gltf["extensionsUsed"] = ["KHR_materials_unlit"]
     return json.dumps(gltf, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
@@ -468,6 +566,26 @@ def validate_embedded_gltf(gltf_text: str) -> dict:
     raw = base64.b64decode(uri[len(prefix):], validate=True)
     if len(raw) != int(buffers[0].get("byteLength", -1)):
         raise ValueError("Embedded buffer byteLength does not match the decoded data.")
+    images = gltf.get("images", [])
+    for image_index, image in enumerate(images):
+        image_uri = image.get("uri", "")
+        image_prefix = "data:image/png;base64,"
+        if not image_uri.startswith(image_prefix):
+            raise ValueError(f"Image {image_index} is not embedded as a PNG data URI.")
+        image_bytes = base64.b64decode(image_uri[len(image_prefix):], validate=True)
+        if not image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError(f"Image {image_index} has an invalid PNG signature.")
+    textures = gltf.get("textures", [])
+    for texture_index, texture in enumerate(textures):
+        if not 0 <= int(texture.get("source", -1)) < len(images):
+            raise ValueError(f"Texture {texture_index} refers to a missing image.")
+        sampler = texture.get("sampler")
+        if sampler is not None and not 0 <= int(sampler) < len(gltf.get("samplers", [])):
+            raise ValueError(f"Texture {texture_index} refers to a missing sampler.")
+    for material_index, material in enumerate(gltf.get("materials", [])):
+        texture_info = material.get("pbrMetallicRoughness", {}).get("baseColorTexture")
+        if texture_info is not None and not 0 <= int(texture_info.get("index", -1)) < len(textures):
+            raise ValueError(f"Material {material_index} refers to a missing base-color texture.")
     views = gltf.get("bufferViews", [])
     for index, view in enumerate(views):
         offset = int(view.get("byteOffset", 0))
@@ -532,6 +650,8 @@ def validate_embedded_gltf(gltf_text: str) -> dict:
         "nodes": len(gltf.get("nodes", [])),
         "meshes": len(gltf.get("meshes", [])),
         "buffer_bytes": len(raw),
+        "has_background_texture": bool(images),
+        "background_texture_resolution_px": gltf.get("extras", {}).get("background_texture_resolution_px"),
         "coordinate_units": gltf.get("extras", {}).get("coordinate_units"),
         "depth_semantics": gltf.get("extras", {}).get("depth_semantics"),
     }
