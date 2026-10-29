@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 from . import __version__
-from .imaging import detect_barlines, detect_staff_systems, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, refine_notehead_geometry, staff_step_and_pitch
+from .imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, refine_notehead_geometry, staff_step_and_pitch
 from .musicxml import build_musicxml
 from .proposal import get_default_model, load_model, predict_patch
 
@@ -100,6 +100,11 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
         barlines = detect_barlines(binary, staff)
         staff_objects.append({**staff.to_dict(), "barlines": barlines})
 
+    stem_candidates = detect_stem_candidates(
+        binary,
+        staffs,
+        {int(staff["index"]): staff["barlines"] for staff in staff_objects},
+    )
     notes = []
     unknown_objects = []
     for item in classified:
@@ -132,6 +137,41 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
                 "reason": item.get("unknown_reason") or "Non-note candidate requiring review.",
                 "image_quality_diagnostics": item.get("image_quality_diagnostics", {}),
             })
+
+    # Associate long vertical strokes with nearby noteheads. The same stem may belong
+    # to multiple vertically stacked heads in a chord. All associations remain proposals.
+    for stem in stem_candidates:
+        sx, sy = [float(value) for value in stem["center"]]
+        bx, by, bw, bh = [float(value) for value in stem["bbox"]]
+        spacing = float(staffs[int(stem["staff_index"])].spacing)
+        attached = []
+        for note in notes:
+            if int(note["staff_index"]) != int(stem["staff_index"]):
+                continue
+            nx, ny, nw, nh = [float(value) for value in note["bbox"]]
+            cx, cy = [float(value) for value in note["center"]]
+            edge_distance = min(abs(sx - nx), abs(sx - (nx + nw)))
+            vertical_intersection = (by <= ny + nh + 0.25 * spacing) and (by + bh >= ny - 0.25 * spacing)
+            extends_from_head = (by < cy - 0.25 * spacing) or (by + bh > cy + 0.25 * spacing)
+            if edge_distance <= 0.40 * spacing and vertical_intersection and extends_from_head:
+                attached.append((edge_distance, note["id"]))
+        if attached:
+            attached.sort()
+            stem["associated_note_ids"] = [note_id for _distance, note_id in attached]
+        else:
+            stem["associated_note_ids"] = []
+
+    stem_by_note: dict[str, list[str]] = {}
+    for stem in stem_candidates:
+        if not stem["associated_note_ids"]:
+            continue
+        for note_id in stem["associated_note_ids"]:
+            stem_by_note.setdefault(note_id, []).append(stem["id"])
+    for note in notes:
+        note["stem_ids"] = stem_by_note.get(note["id"], [])
+        note["stem_detection_status"] = "proposal" if note["stem_ids"] else "not_detected_or_unresolved"
+        if "stem_attachment" not in note["uncertainty"]:
+            note["uncertainty"].append("stem_attachment")
 
     # Build a provenance-aware scene graph in observed pixel coordinates.
     # This graph is the editable reconstruction hypothesis; it is not a replacement
@@ -198,6 +238,33 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             })
             relations.append({"type": "member_of", "source": bar_id, "target": system_id})
 
+    for stem in stem_candidates:
+        if not stem["associated_note_ids"]:
+            continue
+        stem_id = str(stem["id"])
+        x, y, box_width, box_height = [float(value) for value in stem["bbox"]]
+        cx, cy = [float(value) for value in stem["center"]]
+        primitive = {
+            "id": stem_id,
+            "kind": "stem",
+            "geometry": {
+                "x0_px": cx,
+                "y0_px": y,
+                "x1_px": cx,
+                "y1_px": y + box_height,
+                "bbox_px": [x, y, box_width, box_height],
+                "length_px": float(stem["length_px"]),
+            },
+            "provenance": {
+                "method": "vertical_morphology_plus_notehead_proximity",
+                "status": "proposal",
+            },
+            "uncertainty": ["stem_direction", "stem_head_attachment", "beam_or_flag"],
+        }
+        primitives.append(primitive)
+        for note_id in stem["associated_note_ids"]:
+            relations.append({"type": "stem_of", "source": stem_id, "target": note_id})
+
     for note in notes:
         x, y, box_width, box_height = [float(v) for v in note["bbox"]]
         center_x, center_y = [float(v) for v in note["center"]]
@@ -225,6 +292,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             "symbolic": {
                 "pitch_proposal": dict(note["pitch"]),
                 "duration": None,
+                "stem_ids": list(note.get("stem_ids", [])),
             },
             "provenance": {
                 "method": "component_geometry_plus_synthetic_patch_classifier_plus_local_template_fit",
