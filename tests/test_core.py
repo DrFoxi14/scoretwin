@@ -561,6 +561,40 @@ def test_gltf_export_rejects_nonfinite_geometry_and_bad_scenes():
         build_gltf({"schema": "wrong", "image": {"width": 1, "height": 1}})
 
 
+def test_browser_analysis_preserves_color_channels_in_residual_download():
+    gray = synthetic_staff()
+    color_bgr = np.stack([
+        gray,
+        np.clip(gray.astype(np.int16) * 3 // 4 + 25, 0, 255).astype(np.uint8),
+        np.clip(gray.astype(np.int16) // 2 + 60, 0, 255).astype(np.uint8),
+    ], axis=2)
+    ok, encoded = cv2.imencode(".png", color_bgr)
+    assert ok
+
+    class MemoryColorUpload:
+        filename = "color-score.png"
+
+        async def read(self) -> bytes:
+            return encoded.tobytes()
+
+    result = asyncio.run(analyze_web_upload(MemoryColorUpload(), page=0, corners_json=None))
+    assert result["identity_reconstruction"]["analysis_raster_encoding"] == "uint8 3-channel BGR analysis raster"
+    assert result["identity_reconstruction"]["exact_pixel_reconstruction_verified"] is True
+    assert result["residual_download_available"] is True
+
+    residual_bytes = base64.b64decode(result["residual_png_base64"], validate=True)
+    residual = cv2.imdecode(np.frombuffer(residual_bytes, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    source_bytes = base64.b64decode(result["source_preview_png_base64"], validate=True)
+    source = cv2.imdecode(np.frombuffer(source_bytes, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    geometry_bytes = base64.b64decode(result["geometry_render_png_base64"], validate=True)
+    geometry = cv2.imdecode(np.frombuffer(geometry_bytes, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    assert source.shape == residual.shape == color_bgr.shape
+    assert residual.dtype == np.uint16
+    recomposed = cv2.cvtColor(geometry, cv2.COLOR_GRAY2BGR).astype(np.int32) + residual.astype(np.int32) - 255
+    assert np.array_equal(source, color_bgr)
+    assert np.array_equal(recomposed.astype(np.uint8), color_bgr)
+
+
 def test_pipeline_creates_bundle_and_preserves_source_bytes(tmp_path):
     image_path = tmp_path / "source.png"
     output_dir = tmp_path / "bundle"
