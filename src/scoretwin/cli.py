@@ -26,6 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--out", type=Path, default=Path("scoretwin-run"))
     analyze.add_argument("--page", type=int, default=0)
     analyze.add_argument("--model", type=Path, default=None)
+    analyze.add_argument("--rectify-skew", action="store_true", help="Use a reversible global-skew analysis raster")
+    analyze.add_argument("--max-skew-degrees", type=float, default=12.0)
 
     train = commands.add_parser("train-model", help="Train the synthetic patch proposal model")
     train.add_argument("--out", type=Path, default=Path("models/proposal.npz"))
@@ -77,13 +79,21 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     if args.command == "analyze":
-        result = process_file(args.input, args.out, page=args.page, model_path=args.model)
+        result = process_file(
+            args.input,
+            args.out,
+            page=args.page,
+            model_path=args.model,
+            rectify_skew=args.rectify_skew,
+            max_skew_degrees=args.max_skew_degrees,
+        )
         print(json.dumps({
             "output_dir": result["output_dir"],
             "source_sha256": result["source_sha256"],
             "source_hash_verified": result["source_hash_verified"],
             "staff_count": len(result["scene"]["staffs"]),
             "note_count": result["scene"]["note_count"],
+            "capture_diagnostics": result["scene"]["capture_diagnostics"],
             "warnings": result["scene"]["warnings"],
         }, indent=2, ensure_ascii=False))
     elif args.command == "train-model":

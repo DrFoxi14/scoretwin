@@ -58,6 +58,12 @@ Create an optional global-rotation preview with a reversible transform back to s
 
 The bundle stores a byte-identical source copy, a resampled preview, and both coordinate transforms. This is a capture diagnostic; the default OMR analysis still runs on the source raster. It handles one global rotation only, not perspective, page curl, or local deformation.
 
+To opt in to analyzing the rectified raster while retaining source coordinates in the scene metadata:
+
+    scoretwin analyze ./score.jpg --rectify-skew --out ./runs/score-rectified
+
+The overlay and structural render use the analysis raster; `source-original.*` remains byte-identical, and `scene.json` plus `capture-transform.json` include mappings back to rasterized source coordinates.
+
 Run the browser app:
 
     scoretwin serve --host 127.0.0.1 --port 8000

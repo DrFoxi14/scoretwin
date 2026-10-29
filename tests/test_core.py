@@ -327,6 +327,32 @@ def test_pipeline_creates_bundle_and_preserves_source_bytes(tmp_path):
     ET.parse(output_dir / "provisional.musicxml")
 
 
+def test_pipeline_can_analyze_rectified_raster_and_keep_source_coordinates(tmp_path):
+    gray, _truth = generate_synthetic_page(seed=52, staff_count=1, notes_per_staff=5)
+    height, width = gray.shape
+    rotation = cv2.getRotationMatrix2D(((width - 1) / 2.0, (height - 1) / 2.0), 3.0, 1.0)
+    rotated = cv2.warpAffine(gray, rotation, (width, height), borderValue=255)
+    input_path = tmp_path / "rotated-source.png"
+    assert cv2.imwrite(str(input_path), rotated)
+    original_bytes = input_path.read_bytes()
+    output_dir = tmp_path / "rectified-bundle"
+
+    result = process_file(input_path, output_dir, rectify_skew=True)
+
+    scene = result["scene"]
+    diagnostic = scene["capture_diagnostics"]
+    assert result["source_hash_verified"] is True
+    assert (output_dir / scene["source"]["preserved_file"]).read_bytes() == original_bytes
+    assert scene["coordinate_frame"] == "analysis_raster_pixel_centers"
+    assert diagnostic["rotation_rectification_requested"] is True
+    assert diagnostic["rotation_rectified"] is True
+    assert abs(diagnostic["analysis_residual_staffline_angle_deg"] or 0.0) < 0.5
+    assert diagnostic["source_image_shape_px"] == list(rotated.shape)
+    assert diagnostic["analysis_image_shape_px"] == [scene["image"]["height"], scene["image"]["width"]]
+    assert (output_dir / "analysis-raster.png").exists()
+    assert (output_dir / "capture-transform.json").exists()
+
+
 def test_pipeline_links_detected_stems_to_noteheads():
     model = {
         "weights": np.zeros((16 * 16 + 1, 3), dtype=np.float32),
