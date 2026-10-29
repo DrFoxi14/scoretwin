@@ -417,6 +417,16 @@ def render_geometry_scene(shape: tuple[int, int], scene: dict, scale: float = 1.
                 20, max(1, int(round(scale))), cv2.LINE_AA,
             )
 
+    for primitive in scene.get("primitives", []):
+        if primitive.get("kind") != "stem":
+            continue
+        geometry = primitive.get("geometry", {})
+        x0 = int(round(float(geometry.get("x0_px", 0)) * scale))
+        y0 = int(round(float(geometry.get("y0_px", 0)) * scale))
+        x1 = int(round(float(geometry.get("x1_px", 0)) * scale))
+        y1 = int(round(float(geometry.get("y1_px", 0)) * scale))
+        cv2.line(image, (x0, y0), (x1, y1), 20, max(1, int(round(scale))), cv2.LINE_AA)
+
     for note in scene.get("notes", []):
         cx, cy = [float(value) * scale for value in note["center"]]
         bbox = [float(value) * scale for value in note["bbox"]]
