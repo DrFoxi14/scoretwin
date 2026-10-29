@@ -91,8 +91,9 @@ Then open http://127.0.0.1:8000. Uploaded files are processed by the local serve
 - scene.json: staff geometry, a primitive graph, typed relations, continuous pitch-position offsets, source provenance, software versions, model-training metadata and warnings;
 - overlay.png: source image with staff/notehead proposals;
 - geometry-render.png: structural render of the currently modeled primitives (not a complete/pixel-identical page render);
-- residual-offset255.png: uint16 PNG encoding of the signed grayscale pixel residual plus 255;
-- reconstructed-analysis.png: pixel-exact recomposition of the decoded grayscale analysis raster;
+- analysis-raster-pixels.png: the decoded grayscale or BGR analysis raster in the coordinate frame used by geometry and texture exports;
+- residual-offset255.png: uint16 PNG encoding of the signed grayscale or per-channel BGR residual plus 255;
+- reconstructed-analysis.png: pixel-exact recomposition of the decoded analysis raster, including all retained BGR channel values for color sources;
 - identity-reconstruction.json: SHA-256 values, pixel mismatch count, maximum absolute error and the scope/limits of the exact-recomposition guarantee;
 - scene.gltf: self-contained glTF 2.0 geometry and embedded analysis-raster texture, with IDs/provenance/uncertainty/relations in per-node extras;
 - provisional.musicxml: XML output carrying explicit review markers.
@@ -101,9 +102,9 @@ Unresolved regions include a heuristic reason such as low local contrast, low lo
 
 ### Exact residual reconstruction
 
-The bundle renders the currently modeled primitives into an 8-bit grayscale image \(G\), then computes the signed residual \(R=I-G\) against the decoded grayscale analysis raster \(I\). Because \(R\) ranges from \(-255\) to \(255\), the stored PNG uses unsigned 16-bit values \(R_{16}=R+255\). Recomposing \(I'=G+R_{16}-255\) recovers every analysis-raster sample exactly when the stored files are read back. The pipeline checks this with an array equality assertion and reports the mismatch count and maximum absolute error in \`identity-reconstruction.json\`.
+The bundle renders the currently modeled primitives into an 8-bit grayscale image \(G\). For a grayscale input, the signed residual is \(R=I-G\) against the decoded grayscale raster \(I\). For a color input, the renderer is lifted into BGR channels and the residual is computed separately for each retained channel. Each residual channel ranges from \(-255\) to \(255\), so the stored PNG uses unsigned 16-bit values \(R_{16}=R+255\). Recomposing \(I'=G+R_{16}-255\) recovers each grayscale sample or each retained BGR channel exactly when the stored files are read back. The pipeline checks this with an array equality assertion and reports the mismatch count and maximum absolute error in \`identity-reconstruction.json\`.
 
-This is a lossless identity anchor for the **analysis grayscale raster**, not for color information already lost by grayscale decoding, and not proof that the scene graph or MusicXML is correct. The original upload is preserved separately byte-for-byte and hash-checked. The residual is not advertised as compressed; PNG compression only encodes the uint16 residual image losslessly.
+This is a lossless identity anchor for the **decoded analysis raster**: grayscale samples stay grayscale, and BGR channels are preserved for color images. Alpha is composited over white, 16-bit raster inputs are normalized to uint8 for analysis, and PDF pages are decoded or rendered by the configured loader; this guarantee is not byte identity with the compressed source file. The original upload is preserved separately byte-for-byte and hash-checked. The residual is not advertised as compressed; PNG compression only encodes the uint16 residual image losslessly.
 
 
 The preserved source is the lossless identity anchor. The overlay is a diagnostic layer, not a claim that all original ink has been parsed into primitives. The 3D view uses a semantic layer offset; it is not a measurement of the physical relief of ink.
