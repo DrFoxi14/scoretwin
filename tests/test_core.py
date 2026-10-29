@@ -423,6 +423,43 @@ def test_gltf_export_is_self_contained_and_preserves_scene_metadata():
     assert gltf["accessors"][unknown_mesh["attributes"]["POSITION"]]["count"] == 16
 
 
+def test_gltf_export_embeds_a_page_texture_under_the_symbolic_geometry():
+    image = np.full((64, 96), 255, dtype=np.uint8)
+    cv2.line(image, (0, 20), (95, 20), 0, 1)
+    ok, encoded = cv2.imencode(".png", image)
+    assert ok
+    scene = {
+        "schema": "scoretwin-scene-0.1",
+        "coordinate_frame": "source_raster_pixel_centers",
+        "image": {"width": 96, "height": 64},
+        "source": {"sha256": "original-byte-hash"},
+        "primitives": [{
+            "id": "line-0",
+            "kind": "staffline",
+            "geometry": {"x0_px": 0, "y0_px": 20, "x1_px": 95, "y1_px": 20},
+            "provenance": {"status": "estimated"},
+            "uncertainty": [],
+        }],
+        "notes": [],
+        "relations": [],
+    }
+    gltf_text = build_gltf(scene, background_png=encoded.tobytes())
+    report = validate_embedded_gltf(gltf_text)
+    gltf = __import__("json").loads(gltf_text)
+    assert report["valid"] is True
+    assert report["has_background_texture"] is True
+    assert report["background_texture_resolution_px"] == [96, 64]
+    assert gltf["extras"]["background_texture_embedded"] is True
+    assert gltf["extras"]["background_texture_resampled_to_analysis_frame"] is False
+    assert gltf["extensionsUsed"] == ["KHR_materials_unlit"]
+    assert gltf["images"][0]["mimeType"] == "image/png"
+    assert gltf["images"][0]["uri"].startswith("data:image/png;base64,")
+    plane = next(node for node in gltf["nodes"] if node["name"] == "analysis-raster-plane")
+    plane_primitive = gltf["meshes"][plane["mesh"]]["primitives"][0]
+    assert plane_primitive["attributes"]["TEXCOORD_0"] < len(gltf["accessors"])
+    assert plane["extras"]["idsr"]["semantic_layer_z"] < 0
+
+
 def test_gltf_export_handles_an_empty_scene_with_a_valid_buffer():
     gltf_text = build_gltf({
         "schema": "scoretwin-scene-0.1",
@@ -484,6 +521,8 @@ def test_pipeline_creates_bundle_and_preserves_source_bytes(tmp_path):
     assert gltf_validation["valid"] is True
     assert result["gltf_path"] == str(output_dir / "scene.gltf")
     assert result["gltf_validation"]["nodes"] == gltf_validation["nodes"]
+    assert gltf_validation["has_background_texture"] is True
+    assert gltf_validation["background_texture_resolution_px"] == [original.shape[1], original.shape[0]]
     geometry_render = cv2.imread(str(output_dir / "geometry-render.png"), cv2.IMREAD_GRAYSCALE)
     assert geometry_render is not None and geometry_render.shape == original.shape
     assert int(geometry_render.min()) < 255
