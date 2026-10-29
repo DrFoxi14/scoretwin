@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 
 from scoretwin.benchmark import evaluate_synthetic
-from scoretwin.imaging import detect_staff_systems, extract_notehead_candidates, staff_step_and_pitch
+from scoretwin.imaging import detect_staff_systems, extract_notehead_candidates, refine_notehead_geometry, staff_step_and_pitch
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import analyze_array, process_file
 from scoretwin.proposal import predict_patch, train_proposal_model
@@ -42,6 +42,32 @@ def test_notehead_components_are_proposed_even_across_staff_lines():
     assert len(candidates) >= len(truth) - 2
     assert all(candidate["bbox"][2] > 0 and candidate["bbox"][3] > 0 for candidate in candidates)
     assert all("crop" in candidate for candidate in candidates)
+
+
+def test_local_template_refinement_reduces_synthetic_center_error():
+    gray, truth = generate_synthetic_page(seed=3, staff_count=2, notes_per_staff=9)
+    staffs, binary, staff_mask = detect_staff_systems(gray)
+    rng = np.random.default_rng(456)
+    errors_before = []
+    errors_after = []
+
+    for item in truth:
+        true_x, true_y = item["center"]
+        initial = [true_x + rng.normal(0, 2.1), true_y + rng.normal(0, 2.1)]
+        before = float(np.hypot(initial[0] - true_x, initial[1] - true_y))
+        staff = staffs[item["staff_index"]]
+        result = refine_notehead_geometry(
+            gray, binary, staff_mask, initial, staff.spacing, item["head_type"]
+        )
+        after_x, after_y = result["center"]
+        after = float(np.hypot(after_x - true_x, after_y - true_y))
+        errors_before.append(before)
+        errors_after.append(after)
+        assert result["accepted"]
+        assert result["fit_score"] is not None
+
+    assert len(errors_before) == 18
+    assert float(np.mean(errors_after)) < 0.7 * float(np.mean(errors_before))
 
 
 def test_pitch_mapping_uses_treble_bottom_line_e4():

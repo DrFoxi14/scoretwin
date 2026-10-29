@@ -8,7 +8,7 @@ This repository contains a runnable research prototype:
 
 - image and PDF ingestion;
 - five-line staff detection;
-- notehead proposals that attempt to reconstruct fragments cut by staff lines;
+- notehead proposals that attempt to reconstruct fragments cut by staff lines, followed by a bounded local template-fit refinement;
 - a small synthetic patch classifier, trainable locally;
 - a provenance-aware geometry graph (staff systems, staff lines, barlines, notehead proposals, unknown regions and typed relations) with pixel coordinates and uncertainty flags;
 - a source-aligned 2D editor for dragging notehead proposals and an interactive semantic-layer view in 3D;
@@ -65,7 +65,7 @@ The preserved source is the lossless identity anchor. The overlay is a diagnosti
 ## Epistemic status
 
 - [DEMONSTRATED BY CONSTRUCTION] The original uploaded file is copied byte-for-byte and hash-checked in CLI bundles.
-- [MEASURED BY TESTS] Staff detection, staff-line-crossing notehead proposal, synthetic classifier execution, MusicXML XML parsing and bundle generation are checked by tests.
+- [MEASURED BY TESTS] Staff detection, staff-line-crossing notehead proposal, synthetic classifier execution, local template-fit refinement, scene-graph creation, MusicXML XML parsing and bundle generation are checked by tests.
 - [HYPOTHESIS] The synthetic patch classifier and geometric proposals will transfer to real score photographs. This must be tested on a held-out, real-page benchmark.
 - [NOT YET IMPLEMENTED] End-to-end recovery of complete symbolic-geometric scenes from arbitrary photographs, calibrated symbolic ambiguity, physically measured ink depth and validated DID/MDL metrics.
 
