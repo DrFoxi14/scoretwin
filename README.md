@@ -52,6 +52,10 @@ Analyze one image:
 
     scoretwin analyze ./score.png --out ./runs/score
 
+Validate the emitted 3D scene independently:
+
+    scoretwin validate-gltf ./runs/score/scene.gltf
+
 Analyze a PDF page (zero-indexed page number):
 
     scoretwin analyze ./score.pdf --page 0 --out ./runs/score
@@ -87,11 +91,18 @@ Then open http://127.0.0.1:8000. Uploaded files are processed by the local serve
 - scene.json: staff geometry, a primitive graph, typed relations, continuous pitch-position offsets, source provenance, software versions, model-training metadata and warnings;
 - overlay.png: source image with staff/notehead proposals;
 - geometry-render.png: structural render of the currently modeled primitives (not a complete/pixel-identical page render);
+- scene.gltf: self-contained glTF 2.0 meshes for staff lines, barlines, noteheads, linked stems and unresolved regions, with IDs/provenance/uncertainty in per-node extras;
 - provisional.musicxml: XML output carrying explicit review markers.
 
 Unresolved regions include a heuristic reason such as low local contrast, low local sharpness/blur, or an unfamiliar/uncertain mark. These thresholds are not calibrated; the UI explicitly treats them as diagnostic hints, not probabilities.
 
 The preserved source is the lossless identity anchor. The overlay is a diagnostic layer, not a claim that all original ink has been parsed into primitives. The 3D view uses a semantic layer offset; it is not a measurement of the physical relief of ink.
+
+### glTF export semantics
+
+The generated \`scene.gltf\` embeds its geometry buffer in a base64 data URI, so it is one portable file with no separate \`.bin\` dependency. X/Y coordinates use the analysis raster's pixel frame; Y is converted to glTF's Y-up convention. Notes and linked stems receive small Z offsets for viewing semantic layers and annotated voices. Those offsets are display conventions, not measurements of the physical page or ink relief. The exporter preserves primitive IDs, symbolic annotations, provenance, uncertainty and source/capture hashes in glTF \`extras\`. The current mesh coverage is deliberately limited to staff lines, barlines, noteheads, attached stems and unresolved bounding regions; beams, lyrics, slurs, dynamics, clefs and paper texture are not reconstructed yet.
+
+Use **Download current 3D scene (.gltf)** in the browser after editing to export the current geometry. The CLI bundle also writes \`scene.gltf\` and validates its embedded buffers and mesh indices before returning success.
 
 For hand-annotated scene JSON, MusicXML export accepts note fields `chord_id`, `voice`, `onset`, `duration`, `type`, `accidental`, and `pitch.alter`. Staffs can share `part_id` and specify `part_name`, `system_index`, `staff_number`, `key_fifths`, `time_signature`, and `clef`; notes can override `system_index` or set `measure_index`. `onset` and `duration` use MusicXML divisions (the current default is one division per quarter note). The exporter serializes supplied annotations, adds review-marked geometric chord hypotheses, and keeps unresolved fields flagged; it does not infer voices or accidentals.
 
