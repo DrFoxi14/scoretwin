@@ -13,7 +13,7 @@ from scoretwin.benchmark import evaluate_perspective_capture, evaluate_synthetic
 from scoretwin.benchmark_manifest import evaluate_manifest
 from scoretwin.benchmark_photo_smoke import evaluate_photo_smoke
 from scoretwin.gltf_export import build_gltf, validate_embedded_gltf
-from scoretwin.metrics import binary_mask_metrics, compare_idsr_components, geometry_metrics, photometric_metrics, relation_metrics, residual_compressibility_metrics
+from scoretwin.metrics import binary_mask_metrics, compare_idsr_components, geometry_metrics, measure_bundle_storage, photometric_metrics, relation_metrics, residual_compressibility_metrics
 from scoretwin.imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch, transform_points_xy
 from scoretwin.musicxml import build_musicxml
 from scoretwin.pipeline import _classify_candidates, analyze_array, process_file
@@ -401,6 +401,27 @@ def test_component_metrics_report_exact_photo_geometry_masks_and_relations():
     assert report["aggregate_did"] is None
     assert "weights require preregistered calibration" in report["aggregate_did_status"]
     assert report["metrics"]["photometric"]["exact_pixel_fraction"] == 1.0
+
+
+def test_bundle_storage_accounting_counts_all_artifacts_except_source_copy(tmp_path):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "source-original.png").write_bytes(b"immutable-source")
+    (bundle / "scene.json").write_bytes(b'{"schema":"test"}')
+    (bundle / "residual-offset255.png").write_bytes(b"residual")
+    (bundle / "scene.gltf").write_bytes(b"mesh-plus-texture")
+
+    report = measure_bundle_storage(bundle, pixel_count=100)
+    included_bytes = len(b'{"schema":"test"}') + len(b"residual") + len(b"mesh-plus-texture")
+    assert report["included_file_count"] == 3
+    assert report["included_file_bytes"] == included_bytes
+    assert report["stored_artifact_bits_per_pixel"] == 8 * included_bytes / 100
+    assert report["excluded_source_copy_count"] == 1
+    assert report["excluded_source_copy_bytes"] == len(b"immutable-source")
+    assert "not a model-based minimum-description-length" in report["status"]
+    assert {item["path"] for item in report["included_files"]} == {
+        "scene.json", "residual-offset255.png", "scene.gltf"
+    }
 
 
 def test_component_metrics_reject_shape_mismatch_and_uncalibrated_geometry():
