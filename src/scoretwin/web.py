@@ -72,7 +72,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <section class="panel"><h2>Warnings</h2><pre id="warnings"></pre></section>
 </div>
 <script>
-let currentScene=null, originalScene=null, yaw=-0.38, tilt=-0.2, dragging=false, draggingNote=-1, lastX=0, lastY=0;
+let currentScene=null, originalScene=null, backgroundPreviewPngBase64=null, yaw=-0.38, tilt=-0.2, dragging=false, draggingNote=-1, lastX=0, lastY=0;
 let cornerImage=null, cornerScaleX=1, cornerScaleY=1, cornerPoints=[], selectingCorners=false, cornerObjectUrl=null;
 const canvas=document.getElementById('scene3d'),ctx=canvas.getContext('2d');
 const pageCanvas=document.getElementById('pageCanvas'),pageCtx=pageCanvas.getContext('2d');
@@ -272,6 +272,7 @@ form.addEventListener('submit',async(event)=>{
   currentScene=result.scene;
   currentScene.source=result.source;
   originalScene=JSON.parse(JSON.stringify(currentScene));
+  backgroundPreviewPngBase64=result.source_preview_png_base64;
   sourcePreview.src='data:image/png;base64,'+result.source_preview_png_base64;
   document.getElementById('summary').textContent=JSON.stringify(result.summary,null,2);
   const unresolved=(currentScene.unknown_objects||[]).map(item=>item.id+': '+item.reason);
@@ -321,13 +322,13 @@ document.getElementById('export-gltf-edits').addEventListener('click',async()=>{
  if(!currentScene)return;
  const button=document.getElementById('export-gltf-edits');button.disabled=true;
  try{
-  const response=await fetch('/api/export-gltf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentScene)});
+  const response=await fetch('/api/export-gltf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scene:currentScene,background_png_base64:backgroundPreviewPngBase64})});
   const result=await response.json();if(!response.ok)throw new Error(result.detail||'glTF export failed');
   const blob=new Blob([result.gltf],{type:'model/gltf+json'});
   const url=URL.createObjectURL(blob),anchor=document.createElement('a');
   anchor.href=url;anchor.download='scoretwin-scene.gltf';anchor.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
-  document.getElementById('status').textContent='Self-contained glTF exported. Its Z offsets are semantic layers, not physical ink depth.';
+  document.getElementById('status').textContent='Self-contained glTF exported with the analysis-raster texture. Z offsets are semantic layers, not physical ink depth.';
  }catch(error){document.getElementById('status').textContent=error.message||String(error);}
  finally{button.disabled=false;}
 });
@@ -488,13 +489,25 @@ def render_current_geometry(scene: dict = Body(...)) -> dict:
 
 
 @app.post("/api/export-gltf")
-def export_gltf(scene: dict = Body(...)) -> dict:
+def export_gltf(payload: dict = Body(...)) -> dict:
+    scene = payload.get("scene", payload)
+    background_png = None
+    encoded_background = payload.get("background_png_base64") if "scene" in payload else None
+    if encoded_background is not None:
+        if not isinstance(encoded_background, str) or len(encoded_background) > 32 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Background preview payload is invalid or too large.")
+        try:
+            background_png = base64.b64decode(encoded_background, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail="Background preview must be base64-encoded PNG data.") from exc
+        if not background_png.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+            raise HTTPException(status_code=422, detail="Background preview must be a PNG.")
     if scene.get("schema") != "scoretwin-scene-0.1":
         raise HTTPException(status_code=400, detail="Unrecognized ScoreTwin scene schema.")
     if len(scene.get("notes", [])) > 5000 or len(scene.get("primitives", [])) > 30000:
         raise HTTPException(status_code=413, detail="Scene contains too many notes or geometry primitives.")
     try:
-        gltf = build_gltf(scene)
+        gltf = build_gltf(scene, background_png=background_png)
         validation = validate_embedded_gltf(gltf)
     except (ValueError, TypeError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
