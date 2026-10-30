@@ -38,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help='Manual page corners as JSON: [[x_tl,y_tl],[x_tr,y_tr],[x_br,y_br],[x_bl,y_bl]] in source pixels',
     )
+    analyze.add_argument(
+        "--auto-substrate",
+        action="store_true",
+        help="Automatically detect and rectify the paper substrate quadrilateral on a desk background",
+    )
 
     train = commands.add_parser("train-model", help="Train the synthetic patch proposal model")
     train.add_argument("--out", type=Path, default=Path("models/proposal.npz"))
@@ -159,6 +164,7 @@ def main() -> None:
             rectify_skew=args.rectify_skew,
             max_skew_degrees=args.max_skew_degrees,
             rectify_corners=json.loads(args.corners_json) if args.corners_json else None,
+            auto_substrate=args.auto_substrate,
         )
         print(json.dumps({
             "output_dir": result["output_dir"],

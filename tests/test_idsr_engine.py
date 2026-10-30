@@ -689,6 +689,28 @@ def test_background_desk_and_finger_disentangler() -> None:
     recon = np.clip(gz.astype(np.int32) + res_u16.astype(np.int32) - 255, 0, 255).astype(np.uint8)
     assert np.array_equal(recon, rect_gray), "Lossless 2D recomposition must be bit-exact"
 
+    # Test Direction D: End-to-End process_file with auto_substrate=True
+    import tempfile
+    from pathlib import Path
+    from scoretwin.pipeline import process_file
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        photo_path = Path(tmpdir) / "smartphone_desk_capture.png"
+        cv2.imwrite(str(photo_path), desk_photo)
+        bundle_dir = Path(tmpdir) / "output_bundle"
+
+        bundle_result = process_file(
+            photo_path,
+            bundle_dir,
+            auto_substrate=True,
+        )
+        assert bundle_result["source_hash_verified"] is True
+        b_scene = bundle_result["scene"]
+        assert len(b_scene["notes"]) == 1
+        assert b_scene["finger_occlusions"]["has_finger_occlusions"] is True
+        assert Path(bundle_result["musicxml_path"]).exists()
+        assert Path(bundle_result["residual_path"]).exists()
+
 
 
 

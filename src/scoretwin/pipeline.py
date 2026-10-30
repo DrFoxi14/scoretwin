@@ -904,6 +904,7 @@ def process_file(
     rectify_skew: bool = False,
     max_skew_degrees: float = 12.0,
     rectify_corners: list | None = None,
+    auto_substrate: bool = False,
 ) -> dict:
     """Generate a self-contained analysis bundle and preserve input bytes unchanged."""
     source = Path(input_path)
@@ -924,6 +925,12 @@ def process_file(
         rectification = rectify_page_quadrilateral(source_gray, rectify_corners)
     elif rectify_skew:
         rectification = rectify_global_skew(source_gray, max_abs_skew_degrees=max_skew_degrees)
+    elif auto_substrate:
+        sub_res = detect_page_substrate_quadrilateral(source_pixels)
+        if not sub_res.get("already_cropped_to_page", True):
+            rectification = rectify_page_quadrilateral(source_gray, sub_res["corners_ordered_xy"])
+        else:
+            rectification = None
     else:
         rectification = None
     analysis_gray = rectification.image if rectification is not None else source_gray

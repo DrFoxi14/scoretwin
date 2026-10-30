@@ -105,6 +105,10 @@ def detect_page_substrate_quadrilateral(
                 box_pts = cv2.boxPoints(rect_box) / scale
                 corners_ordered = order_quadrilateral_corners(box_pts)
 
+        if corners_ordered is not None:
+            corners_ordered[:, 0] = np.clip(corners_ordered[:, 0], 0.0, float(w_orig - 1))
+            corners_ordered[:, 1] = np.clip(corners_ordered[:, 1], 0.0, float(h_orig - 1))
+
     # Check if page is already tightly cropped or if detection defaulted
     if corners_ordered is None:
         corners_ordered = np.array([

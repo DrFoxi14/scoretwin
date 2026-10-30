@@ -44,7 +44,7 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <h1>ScoreTwin <span class="muted">/ IDSR</span></h1>
 <p class="muted">Geometry-first score digitization prototype. The source stays the identity anchor; symbolic proposals remain provisional.</p>
 <div class="panel">
-<form id="upload"><label for="file">Choose an image or PDF</label><br><input id="file" name="file" type="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf"><br><label for="camera-file">Or take a photo with the phone camera</label><br><input id="camera-file" name="camera-file" type="file" accept="image/*" capture="environment"><br><label for="page">PDF page index (0-based; ignored for images)</label><br><input id="page" name="page" type="number" min="0" max="10000" value="0"><br><button id="submit" type="submit">Analyze page</button></form>
+<form id="upload"><label for="file">Choose an image or PDF</label><br><input id="file" name="file" type="file" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.pdf"><br><label for="camera-file">Or take a photo with the phone camera</label><br><input id="camera-file" name="camera-file" type="file" accept="image/*" capture="environment"><br><label for="page">PDF page index (0-based; ignored for images)</label><br><input id="page" name="page" type="number" min="0" max="10000" value="0"><br><label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input id="auto-substrate" name="auto-substrate" type="checkbox" checked> Auto-crop paper on desk / background (homography H)</label><br><button id="submit" type="submit">Analyze page</button></form>
 <div id="corner-panel" hidden><h2>Optional perspective correction</h2><p class="muted">On a photo, tap the page corners in order: top left, top right, bottom right, bottom left. This assumes a flat page.</p><button id="mark-corners" type="button">Select four page corners</button><button id="clear-corners" type="button">Clear corners</button><p id="corner-status" class="muted" aria-live="polite"></p><canvas id="cornerCanvas" aria-label="Preview for selecting page corners"></canvas></div>
 <div id="status" class="status" role="status"></div>
 </div>
@@ -130,6 +130,15 @@ function drawPage(){
   const x=item.bbox[0]*sx,y=item.bbox[1]*sy,w=item.bbox[2]*sx,h=item.bbox[3]*sy;
   pageCtx.strokeStyle='#e3b35b';pageCtx.lineWidth=1;pageCtx.strokeRect(x,y,w,h);
  });
+ if(currentScene.finger_occlusions&&currentScene.finger_occlusions.detected_fingers){
+  currentScene.finger_occlusions.detected_fingers.forEach(f=>{
+   const fb=f.bbox_px,fx=fb[0]*sx,fy=fb[1]*sy,fw=fb[2]*sx,fh=fb[3]*sy;
+   pageCtx.strokeStyle='#38bdf8';pageCtx.lineWidth=2;pageCtx.setLineDash([4,3]);
+   pageCtx.strokeRect(fx,fy,fw,fh);pageCtx.setLineDash([]);
+   pageCtx.fillStyle='#38bdf8';pageCtx.font='bold '+(Math.max(9,pageCanvas.width/100))+'px system-ui';
+   pageCtx.fillText('✋ '+f.finger_id+' (occlusion mask)',fx+4,fy+14);
+  });
+ }
 }
 function activeFile(){return document.getElementById('camera-file').files[0]||document.getElementById('file').files[0]||null;}
 function drawCornerPage(){
@@ -293,6 +302,8 @@ form.addEventListener('submit',async(event)=>{
   const body=new FormData();body.append('file',file);body.append('page',document.getElementById('page').value||'0');
   if(selectingCorners){status.textContent='Select all four page corners or clear the selection first.';button.disabled=false;return;}
   if(cornerPoints.length===4)body.append('corners_json',JSON.stringify(cornerPoints));
+  const autoSub=document.getElementById('auto-substrate');
+  if(autoSub)body.append('auto_substrate',autoSub.checked?'true':'false');
   const response=await fetch('/api/analyze',{method:'POST',body});const result=await response.json();
   if(!response.ok)throw new Error(result.detail||'Analysis failed');
   currentScene=result.scene;
@@ -431,6 +442,7 @@ async def analyze(
     file: UploadFile = File(...),
     page: int = Form(0),
     corners_json: str | None = Form(None),
+    auto_substrate: bool = Form(True),
 ) -> dict:
     filename = Path(file.filename or "upload.bin").name
     suffix = Path(filename).suffix.lower()
@@ -457,6 +469,7 @@ async def analyze(
                 page=page,
                 model_path=model_path,
                 rectify_corners=corners,
+                auto_substrate=auto_substrate,
             )
             scene = analysis_result["scene"]
             source_sha256 = analysis_result["source_sha256"]
@@ -499,6 +512,7 @@ async def analyze(
                     "staff_count": len(scene["staffs"]),
                     "proposals": scene["proposal_count"],
                     "notehead_proposals": scene["note_count"],
+                    "finger_occlusions_count": (scene.get("finger_occlusions") or {}).get("fingers_detected_count", 0),
                     "dynamic_lyrics_count": len((scene.get("idsr_dynamic_layer") or {}).get("dynamic_lyrics_detected", [])),
                     "dynamic_dynamics_count": len((scene.get("idsr_dynamic_layer") or {}).get("dynamic_dynamics_detected", [])),
                     "dynamic_voltas_count": len((scene.get("idsr_dynamic_layer") or {}).get("dynamic_volta_brackets_detected", [])),

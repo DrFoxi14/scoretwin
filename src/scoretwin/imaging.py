@@ -698,7 +698,9 @@ def extract_notehead_candidates(
         if h > 1.4 * spacing:
             region = labels[y:y + h, x:x + w] == component
             row_counts = region.sum(axis=1)
-            active_rows = np.flatnonzero(row_counts >= max(4, int(0.28 * spacing)))
+            max_rc = float(row_counts.max()) if len(row_counts) > 0 else 0.0
+            row_thresh = max(int(0.50 * max_rc), max(4, int(0.38 * spacing)))
+            active_rows = np.flatnonzero(row_counts >= row_thresh)
             if len(active_rows) < max(3, int(0.30 * spacing)):
                 continue
             # Split active_rows into contiguous vertical bands only when each band is a thick notehead
@@ -712,10 +714,10 @@ def extract_notehead_candidates(
             if len(runs) > 1:
                 valid_head_runs = [
                     r for r in runs
-                    if (r[-1] - r[0] + 1) >= max(4, int(0.42 * spacing))
-                    and float(region[r[0] : r[-1] + 1].mean()) >= 0.45
+                    if (r[-1] - r[0] + 1) >= max(4, int(0.38 * spacing))
+                    and float(region[r[0] : r[-1] + 1].mean()) >= 0.40
                 ]
-                if len(valid_head_runs) >= 2:
+                if len(valid_head_runs) >= 1:
                     runs = valid_head_runs
                 else:
                     runs = [[int(active_rows.min()), int(active_rows.max())]]
