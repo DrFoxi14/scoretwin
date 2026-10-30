@@ -287,10 +287,11 @@ def detect_clef_glyph_at_staff_start(
     comp_mask = (labels == c_idx).astype(np.uint8)
 
     # 1. Test for G-clef (Treble / French Violin):
-    # Very tall (typically >= 5.0 * sp), extends substantially above top line and below bottom line
+    # Very tall (typically >= 5.0 * sp), with a wide central loop (bw >= 1.35 * sp)
+    # extends substantially above top line and below bottom line
     extends_above = (y0 + by) < (top_line - 1.2 * sp)
     extends_below = (y0 + by + bh) > (bot_line + 1.2 * sp)
-    if total_h >= 4.8 * sp and bw >= 0.85 * sp and (extends_above or extends_below):
+    if total_h >= 4.8 * sp and bw >= 1.35 * sp and (extends_above or extends_below):
         # Determine anchor line: locate the central loop (widest horizontal portion)
         row_counts = np.sum(comp_mask, axis=1)
         widest_row = int(np.argmax(row_counts))
@@ -353,33 +354,40 @@ def detect_clef_glyph_at_staff_start(
 
     # 3. Test for C-clef (Soprano, Mezzo, Alto, Tenor, Baritone C):
     # Two vertical uprights connected by a central cusp pointing at line L.
-    # The vertical profile shows minimum width or internal indentation at the cusp y.
-    # Find cusp y from horizontal profile or centroid
-    row_widths = np.sum(comp_mask, axis=1)
-    # The cusp in a C-clef has an indentation or distinct horizontal crossbar
-    active_rows = np.nonzero(row_widths)[0]
-    if len(active_rows):
-        mid_row_in_roi = int(np.mean(active_rows))
-        cusp_y_global = y0 + mid_row_in_roi
-    else:
-        cusp_y_global = cy_global
+    # C-clef glyphs require substantial height and width (at least 3.0 * sp high and 0.7 * sp wide)
+    if total_h >= 3.0 * sp and total_h <= 4.8 * sp and bw >= 0.7 * sp:
+        row_widths = np.sum(comp_mask, axis=1)
+        active_rows = np.nonzero(row_widths)[0]
+        if len(active_rows):
+            mid_row_in_roi = int(np.mean(active_rows))
+            cusp_y_global = y0 + mid_row_in_roi
+        else:
+            cusp_y_global = cy_global
 
-    closest_line_idx = min(range(len(lines_sorted)), key=lambda l_idx: abs(lines_sorted[l_idx] - cusp_y_global))
-    c_line = len(lines_sorted) - closest_line_idx
-    c_line = max(1, min(5, c_line))
+        closest_line_idx = min(range(len(lines_sorted)), key=lambda l_idx: abs(lines_sorted[l_idx] - cusp_y_global))
+        c_line = len(lines_sorted) - closest_line_idx
+        c_line = max(1, min(5, c_line))
 
-    c_map = {1: "soprano", 2: "mezzo_soprano", 3: "alto", 4: "tenor", 5: "baritone_c"}
-    clef_id = c_map.get(c_line, "alto")
+        c_map = {1: "soprano", 2: "mezzo_soprano", 3: "alto", 4: "tenor", 5: "baritone_c"}
+        clef_id = c_map.get(c_line, "alto")
+
+        return {
+            "detected": True,
+            "sign": "C",
+            "line": c_line,
+            "clef_id": clef_id,
+            "confidence": 0.88,
+            "bbox_px": [x0 + bx, y0 + by, bw, bh],
+            "center_px": [round(float(cx_global), 2), round(float(cy_global), 2)],
+            "historical_info": HISTORICAL_CLEF_DEFINITIONS[clef_id],
+        }
 
     return {
-        "detected": True,
-        "sign": "C",
-        "line": c_line,
-        "clef_id": clef_id,
-        "confidence": 0.88,
-        "bbox_px": [x0 + bx, y0 + by, bw, bh],
-        "center_px": [round(float(cx_global), 2), round(float(cy_global), 2)],
-        "historical_info": HISTORICAL_CLEF_DEFINITIONS[clef_id],
+        "detected": False,
+        "sign": "G",
+        "line": 2,
+        "confidence": 0.5,
+        "reason": "No confident clef glyph matched visual criteria; defaulting to system structural role",
     }
 
 

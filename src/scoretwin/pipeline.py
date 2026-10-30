@@ -202,44 +202,46 @@ def analyze_array(
     )
     notes = []
     unknown_objects = []
+    step_offsets = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
     for item in classified:
         staff_index = item["staff_index"]
         staff = staffs[staff_index]
         cx, cy = item["center"]
-        if item["class"] in ("filled_head", "hollow_head", "corroded_filled_head"):
-            assigned_clef = staff_objects[staff_index].get("clef") if staff_index < len(staff_objects) else None
-            step, letter, octave = staff_step_and_pitch(cy, staff, clef=assigned_clef)
-            is_corroded = (item["class"] == "corroded_filled_head") or bool(
-                (item.get("corrosion_perforation") or {}).get("is_acid_cellulose_perforation")
-            )
-            notes.append({
-                "id": item["id"],
-                "staff_index": staff_index,
-                "bbox": item["bbox"],
-                "center": item["center"],
-                "pitch": {"step": letter, "octave": octave},
-                "shape_class": "corroded_filled_head" if is_corroded else item["class"],
-                "diatonic_step_from_bottom_line": step,
-                "pitch_confidence": item["confidence"],
-                "geometry_refinement": item.get("geometry_refinement"),
-                "beer_lambert_refinement": item.get("beer_lambert_refinement"),
-                "handwritten_ductus": item.get("handwritten_ductus"),
-                "cluster_type": item.get("cluster_type"),
-                "corrosion_perforation": item.get("corrosion_perforation"),
-                "duration": None,
-                "uncertainty": ["key_signature", "accidental", "duration", "voice", "instrument_or_part", "measure_assignment"],
-            })
-        else:
-            unknown_objects.append({
-                "id": item["id"],
-                "staff_index": staff_index,
-                "bbox": item["bbox"],
-                "center": item["center"],
-                "class": item["class"],
-                "confidence": item["confidence"],
-                "reason": item.get("unknown_reason") or "Non-note candidate requiring review.",
-                "image_quality_diagnostics": item.get("image_quality_diagnostics", {}),
-            })
+        raw_cls = item.get("class", "filled_head")
+        is_corroded = (raw_cls == "corroded_filled_head") or bool(
+            (item.get("corrosion_perforation") or {}).get("is_acid_cellulose_perforation")
+        )
+        shape_class = (
+            "corroded_filled_head"
+            if is_corroded
+            else ("hollow_head" if raw_cls == "hollow_head" else "filled_head")
+        )
+        assigned_clef = staff_objects[staff_index].get("clef") if staff_index < len(staff_objects) else None
+        step, letter, octave = staff_step_and_pitch(cy, staff, clef=assigned_clef)
+        continuous_step = (float(staff.bottom) - cy) / (float(staff.spacing) / 2.0)
+        midi_pitch = (octave + 1) * 12 + step_offsets.get(letter, 0)
+        freq_hz = 440.0 * (2.0 ** ((midi_pitch - 69) / 12.0))
+
+        notes.append({
+            "id": item["id"],
+            "staff_index": staff_index,
+            "bbox": item["bbox"],
+            "center": item["center"],
+            "pitch": {"step": letter, "octave": octave},
+            "shape_class": shape_class,
+            "diatonic_step_from_bottom_line": step,
+            "continuous_staff_step": round(float(continuous_step), 3),
+            "midi_pitch": int(midi_pitch),
+            "frequency_hz": round(float(freq_hz), 2),
+            "pitch_confidence": float(item.get("confidence", 0.95)),
+            "geometry_refinement": item.get("geometry_refinement"),
+            "beer_lambert_refinement": item.get("beer_lambert_refinement"),
+            "handwritten_ductus": item.get("handwritten_ductus"),
+            "cluster_type": item.get("cluster_type"),
+            "corrosion_perforation": item.get("corrosion_perforation"),
+            "duration": None,
+            "uncertainty": ["key_signature", "accidental", "duration", "voice", "instrument_or_part", "measure_assignment"],
+        })
 
     # Associate long vertical strokes with nearby noteheads. The same stem may belong
     # to multiple vertically stacked heads in a chord. All associations remain proposals.

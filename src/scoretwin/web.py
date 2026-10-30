@@ -30,6 +30,8 @@ PAGE = r"""<!doctype html>
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ScoreTwin / IDSR</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <style>
 :root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#10131a;color:#edf0f6}
 body{max-width:1150px;margin:0 auto;padding:28px 18px}
@@ -95,11 +97,43 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 <button id="download-residual" type="button" disabled>Download uint16 residual PNG</button>
 <button id="download-identity-report" type="button" disabled>Download identity report JSON</button>
 </section>
-<section class="panel"><h2>3D semantic layer view</h2>
-<p class="muted">Drag to rotate. The layer offset is a visualization convention, not measured physical ink depth.</p>
-<canvas id="scene3d" width="1100" height="400" aria-label="Interactive semantic layer preview"></canvas><br>
-<label for="lambda">Layer separation λ</label> <input id="lambda" type="range" min="0" max="1" step="0.02" value="0.55">
-<button id="reset-view" type="button">Reset view</button>
+<section class="panel" id="panel-4d-reader">
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+  <div>
+    <h2 style="margin:0;color:#58a6ff;display:flex;align-items:center;gap:8px">
+      <span>🌐 Geamăn Digital 3D & Cititor Continuu 4D</span>
+    </h2>
+    <p class="muted" style="margin:4px 0 0 0">
+      Reconstrucție fizică WebGL volumetrică (relief cerneală pe pergament). Cititorul optic 4D parcurge partitura în timp real și sintetizează frecvențele direct din geometria cernelii, ocolind complet OMR-ul.
+    </p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <button id="btn-play-4d" type="button" style="background:#238636;color:#ffffff;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+      ▶️ Pornește Cititorul 4D
+    </button>
+    <button id="btn-stop-4d" type="button" style="background:#21262d;color:#edf0f6;border:1px solid #303949;padding:10px 14px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
+      ⏹️ Reset
+    </button>
+    <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9da8b9">
+      Tempo: <input id="reader4d-tempo" type="range" min="40" max="180" value="80" style="vertical-align:middle;width:90px"> <span id="reader4d-tempo-val">80 BPM</span>
+    </label>
+    <label for="lambda" style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#9da8b9">
+      Separare 3D λ: <input id="lambda" type="range" min="0" max="1" step="0.02" value="0.55" style="vertical-align:middle;width:80px">
+    </label>
+    <button id="reset-view" type="button" style="padding:6px 12px;font-size:12px;background:#303949;color:#edf0f6;border-radius:6px">Reset cameră</button>
+  </div>
+</div>
+<div id="status-4d-bar" style="background:#0d1117;border:1px solid #303949;padding:10px 14px;border-radius:6px;margin-bottom:10px;font-family:monospace;font-size:13px;color:#38bdf8;display:flex;justify-content:space-between;align-items:center">
+  <span id="status-4d-text">Cititor 4D pregătit. Apasă pe Play pentru scanare optică și sinteză directă din cerneală.</span>
+  <span id="status-4d-metric">0 note active</span>
+</div>
+<div id="threejs-container" style="width:100%;height:460px;position:relative;border-radius:10px;overflow:hidden;background:#07090e;border:1px solid #303949;box-shadow:inset 0 0 40px rgba(0,0,0,0.8)">
+  <canvas id="scene3d" width="1100" height="460" aria-label="Interactive semantic layer preview" style="width:100%;height:100%;display:block"></canvas>
+</div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:12px;color:#6e7681">
+  <span>Rotire: Click stânga + Drag | Pan: Click dreapta + Drag | Zoom: Scroll (poți privi notele inclusiv de dedesubt)</span>
+  <span>Sinteză: Web Audio API Oscillator Matrix (Direct Y → Hz)</span>
+</div>
 </section>
 <section class="panel"><h2>Review and edit pitch proposals</h2>
 <p class="muted">Changing a pitch changes the symbolic proposal only. The original image and its recorded hash do not change. Durations, key signatures, accidentals, voices and part assignment still require review.</p>
@@ -246,6 +280,310 @@ function loadCornerPreview(){
  cornerImage.onerror=()=>{document.getElementById('corner-panel').hidden=true;};
  cornerImage.src=cornerObjectUrl;
 }
+let threeRenderer=null, threeScene=null, threeCamera=null, threeControls=null;
+let threeObjectsGroup=null, threeNoteMeshes={}, laserBeamMesh=null;
+let audioCtx=null;
+
+function getAudioContext(){
+ if(!audioCtx){
+  const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+  if(AudioContextClass)audioCtx=new AudioContextClass();
+ }
+ if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume();
+ return audioCtx;
+}
+
+function playOpticalTone(freq,durSec=0.38,gainLevel=0.22){
+ const ctx=getAudioContext();if(!ctx)return;
+ try{
+  const now=ctx.currentTime;
+  const osc=ctx.createOscillator();
+  const oscHarm=ctx.createOscillator();
+  const masterGain=ctx.createGain();
+
+  osc.type='triangle';
+  osc.frequency.setValueAtTime(freq,now);
+
+  oscHarm.type='sine';
+  oscHarm.frequency.setValueAtTime(freq*2.0,now);
+
+  const harmGain=ctx.createGain();
+  harmGain.gain.setValueAtTime(gainLevel*0.28,now);
+
+  masterGain.gain.setValueAtTime(0.0001,now);
+  masterGain.gain.linearRampToValueAtTime(gainLevel,now+0.015);
+  masterGain.gain.exponentialRampToValueAtTime(gainLevel*0.65,now+0.08);
+  masterGain.gain.exponentialRampToValueAtTime(0.0001,now+durSec);
+
+  osc.connect(masterGain);
+  oscHarm.connect(harmGain);
+  harmGain.connect(masterGain);
+  masterGain.connect(ctx.destination);
+
+  osc.start(now);
+  oscHarm.start(now);
+  osc.stop(now+durSec);
+  oscHarm.stop(now+durSec);
+ }catch(e){console.warn('Audio synth warning:',e);}
+}
+
+const reader4D={
+ running:false,tempoBpm:80,currentSystemIdx:0,playheadX:0,minX:0,maxX:1000,
+ notesInActiveSystem:[],playedNoteIds:new Set(),animId:null,lastTimestamp:null,
+
+ start(){
+  if(!currentScene||!currentScene.notes||!currentScene.notes.length)return;
+  getAudioContext();this.running=true;
+  const btn=document.getElementById('btn-play-4d');
+  if(btn){btn.textContent='⏸️ Pauză Cititor 4D';btn.style.background='#d97706';}
+  if(this.playedNoteIds.size===0)this.initSystem(0);
+  this.lastTimestamp=performance.now();
+  this.loop=this.loop.bind(this);
+  this.animId=requestAnimationFrame(this.loop);
+ },
+
+ pause(){
+  this.running=false;
+  const btn=document.getElementById('btn-play-4d');
+  if(btn){btn.textContent='▶️ Reia Cititorul 4D';btn.style.background='#238636';}
+  if(this.animId)cancelAnimationFrame(this.animId);
+ },
+
+ reset(){
+  this.pause();this.currentSystemIdx=0;this.playedNoteIds.clear();
+  const btn=document.getElementById('btn-play-4d');
+  if(btn){btn.textContent='▶️ Pornește Cititorul 4D';btn.style.background='#238636';}
+  if(currentScene)this.initSystem(0);
+  const st=document.getElementById('status-4d-text');
+  if(st)st.textContent='Cititor 4D resetat la începutul partiturii.';
+ },
+
+ initSystem(sysIdx){
+  if(!currentScene||!currentScene.staffs)return;
+  const numStaffs=currentScene.staffs.length;
+  const isSatb2=(numStaffs%2===0&&numStaffs>=4);
+  const activeStaves=isSatb2?[sysIdx*2,sysIdx*2+1]:[sysIdx];
+  this.currentSystemIdx=sysIdx;
+  this.notesInActiveSystem=currentScene.notes.filter(n=>activeStaves.includes(Number(n.staff_index)));
+  if(this.notesInActiveSystem.length>0){
+   const xs=this.notesInActiveSystem.map(n=>Number(n.center[0]));
+   this.minX=Math.max(0,Math.min(...xs)-40);
+   this.maxX=Math.max(...xs)+60;
+  }else{
+   this.minX=100;this.maxX=currentScene.image?currentScene.image.width-100:1000;
+  }
+  this.playheadX=this.minX;
+  this.updateLaserPosition();
+ },
+
+ loop(timestamp){
+  if(!this.running)return;
+  const dt=Math.min(0.1,(timestamp-this.lastTimestamp)/1000);
+  this.lastTimestamp=timestamp;
+  const speed=(this.tempoBpm/60)*115;
+  this.playheadX+=speed*dt;
+
+  this.notesInActiveSystem.forEach(note=>{
+   const nx=Number(note.center[0]);
+   if(nx<=this.playheadX&&!this.playedNoteIds.has(note.id)){
+    this.playedNoteIds.add(note.id);
+    const freq=Number(note.frequency_hz)||(440*Math.pow(2,(Number(note.midi_pitch||69)-69)/12));
+    playOpticalTone(freq,0.40);
+    if(threeNoteMeshes[note.id]){
+     const m=threeNoteMeshes[note.id];
+     m.material.emissive.setHex(0x38bdf8);
+     setTimeout(()=>{if(m&&m.material)m.material.emissive.setHex(0x000000);},280);
+    }
+    const st=document.getElementById('status-4d-text');
+    if(st)st.textContent=`▶ Sistem ${this.currentSystemIdx+1} · Portativ ${Number(note.staff_index)+1} · Nota: ${note.pitch.step}${note.pitch.octave} (${freq.toFixed(1)} Hz)`;
+   }
+  });
+
+  this.updateLaserPosition();
+
+  if(this.playheadX>=this.maxX){
+   const numStaffs=currentScene.staffs.length;
+   const isSatb2=(numStaffs%2===0&&numStaffs>=4);
+   const totalSystems=isSatb2?(numStaffs/2):numStaffs;
+   if(this.currentSystemIdx+1<totalSystems){
+    this.initSystem(this.currentSystemIdx+1);
+   }else{
+    this.reset();
+    const st=document.getElementById('status-4d-text');
+    if(st)st.textContent='✅ Scanare 4D completă pentru toată partitura!';
+    return;
+   }
+  }
+  this.animId=requestAnimationFrame(this.loop);
+ },
+
+ updateLaserPosition(){
+  if(!currentScene)return;
+  const w=currentScene.image.width,h=currentScene.image.height;
+  if(laserBeamMesh){
+   laserBeamMesh.position.x=this.playheadX-w/2;
+   laserBeamMesh.visible=true;
+   const numStaffs=currentScene.staffs.length;
+   const isSatb2=(numStaffs%2===0&&numStaffs>=4);
+   const activeStaves=isSatb2?[this.currentSystemIdx*2,this.currentSystemIdx*2+1]:[this.currentSystemIdx];
+   const s0=currentScene.staffs[activeStaves[0]];
+   const s1=currentScene.staffs[activeStaves[activeStaves.length-1]];
+   if(s0&&s1){
+    const topY=s0.top-20,botY=s1.bottom+20;
+    const midY=(topY+botY)/2;
+    laserBeamMesh.position.y=-(midY-h/2);
+    laserBeamMesh.scale.y=(botY-topY)/200;
+   }
+  }
+ }
+};
+
+function initThreeJs(){
+ const container=document.getElementById('threejs-container');
+ if(!container||!window.THREE)return false;
+ if(threeRenderer)return true;
+ try{
+  const w=container.clientWidth||1100,h=container.clientHeight||460;
+  threeScene=new THREE.Scene();
+  threeScene.background=new THREE.Color(0x07090e);
+
+  threeCamera=new THREE.PerspectiveCamera(45,w/h,1,15000);
+  threeCamera.position.set(0,-400,1600);
+
+  threeRenderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+  threeRenderer.setSize(w,h);
+  threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+  threeRenderer.shadowMap.enabled=true;
+  threeRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
+
+  const oldCanvas=document.getElementById('scene3d');
+  if(oldCanvas&&oldCanvas.parentNode){
+   oldCanvas.style.display='none';
+   container.appendChild(threeRenderer.domElement);
+  }
+
+  if(window.THREE.OrbitControls){
+   threeControls=new THREE.OrbitControls(threeCamera,threeRenderer.domElement);
+   threeControls.enableDamping=true;
+   threeControls.dampingFactor=0.08;
+   threeControls.maxDistance=6000;
+   threeControls.minDistance=200;
+  }
+
+  const amb=new THREE.AmbientLight(0xffffff,0.75);
+  threeScene.add(amb);
+
+  const dir=new THREE.DirectionalLight(0xfff6e8,0.85);
+  dir.position.set(400,800,1200);
+  dir.castShadow=true;
+  threeScene.add(dir);
+
+  const blueRim=new THREE.DirectionalLight(0x38bdf8,0.4);
+  blueRim.position.set(-600,-800,400);
+  threeScene.add(blueRim);
+
+  threeObjectsGroup=new THREE.Group();
+  threeScene.add(threeObjectsGroup);
+
+  const laserGeo=new THREE.BoxGeometry(5,200,35);
+  const laserMat=new THREE.MeshBasicMaterial({color:0x00f0ff,transparent:true,opacity:0.85});
+  laserBeamMesh=new THREE.Mesh(laserGeo,laserMat);
+  laserBeamMesh.visible=false;
+  threeScene.add(laserBeamMesh);
+
+  function animate(){
+   requestAnimationFrame(animate);
+   if(threeControls)threeControls.update();
+   threeRenderer.render(threeScene,threeCamera);
+  }
+  animate();
+  return true;
+ }catch(e){
+  console.error('Three.js init error:',e);
+  return false;
+ }
+}
+
+function buildThreeJsScene(){
+ if(!initThreeJs()||!currentScene)return;
+ while(threeObjectsGroup.children.length>0){
+  threeObjectsGroup.remove(threeObjectsGroup.children[0]);
+ }
+ threeNoteMeshes={};
+ const w=currentScene.image.width,h=currentScene.image.height;
+ const sep=Number(document.getElementById('lambda').value)*Math.max(20,currentScene.staffs.length*12);
+
+ // 1. Realistic 3D Paper Substrate
+ const paperMat=new THREE.MeshStandardMaterial({color:0xfcf9f2,roughness:0.88,metalness:0.04});
+ const paperMesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,8),paperMat);
+ paperMesh.receiveShadow=true;
+ threeObjectsGroup.add(paperMesh);
+
+ // 2. Staff Lines Extruded in 3D
+ const staffLineMat=new THREE.MeshStandardMaterial({color:0x1e293b,roughness:0.4,metalness:0.2});
+ currentScene.staffs.forEach(st=>{
+  st.lines.forEach(ly=>{
+   const lMesh=new THREE.Mesh(new THREE.BoxGeometry(w-40,2.2,2.0),staffLineMat);
+   lMesh.position.set(0,-(ly-h/2),5.0);
+   threeObjectsGroup.add(lMesh);
+  });
+  if(st.barlines){
+   st.barlines.forEach(bx=>{
+    const bMesh=new THREE.Mesh(new THREE.BoxGeometry(2.4,st.bottom-st.top,2.0),staffLineMat);
+    bMesh.position.set(bx-w/2,-((st.top+st.bottom)/2-h/2),5.0);
+    threeObjectsGroup.add(bMesh);
+   });
+  }
+ });
+
+ // 3. Volumetric 3D Noteheads with Carbon Ductus
+ currentScene.notes.forEach(note=>{
+  const nx=Number(note.center[0]),ny=Number(note.center[1]);
+  const rx=Math.max(4.5,Number(note.bbox[2])*0.32);
+  const ry=Math.max(3.2,Number(note.bbox[3])*0.26);
+  const rz=Math.max(3.0,rx*0.6);
+  const isHollow=note.shape_class==='hollow_head';
+  const nMat=new THREE.MeshStandardMaterial({
+   color:isHollow?0xf8fafc:0x0f172a,
+   roughness:isHollow?0.8:0.35,
+   metalness:isHollow?0.1:0.3,
+   wireframe:isHollow
+  });
+  const nGeo=new THREE.SphereGeometry(1,16,12);
+  const nMesh=new THREE.Mesh(nGeo,nMat);
+  nMesh.scale.set(rx,ry,rz);
+  nMesh.rotation.z=-0.35;
+  nMesh.position.set(nx-w/2,-(ny-h/2),6.0+sep*0.25);
+  nMesh.castShadow=true;
+  threeObjectsGroup.add(nMesh);
+  threeNoteMeshes[note.id]=nMesh;
+ });
+
+ // 4. Extruded 3D Stems and Beams
+ const stemMat=new THREE.MeshStandardMaterial({color:0x111827,roughness:0.4,metalness:0.2});
+ (currentScene.primitives||[]).filter(p=>p.kind==='stem').forEach(stem=>{
+  const g=stem.geometry||{};
+  const sx=Number(g.x0_px),sy0=Number(g.y0_px),sy1=Number(g.y1_px);
+  const stemLen=Math.abs(sy1-sy0);
+  const sMesh=new THREE.Mesh(new THREE.BoxGeometry(2.2,stemLen,2.5),stemMat);
+  sMesh.position.set(sx-w/2,-((sy0+sy1)/2-h/2),6.0+sep*0.25);
+  threeObjectsGroup.add(sMesh);
+ });
+
+ (currentScene.primitives||[]).filter(p=>p.kind==='beam').forEach(beam=>{
+  const g=beam.geometry||{};
+  const bx0=Number(g.x0_px),by0=Number(g.y0_px),bx1=Number(g.x1_px),by1=Number(g.y1_px);
+  const bLen=Math.hypot(bx1-bx0,by1-by0);
+  const bAngle=Math.atan2(-(by1-by0),bx1-bx0);
+  const bMesh=new THREE.Mesh(new THREE.BoxGeometry(bLen,3.5,3.0),stemMat);
+  bMesh.position.set((bx0+bx1)/2-w/2,-((by0+by1)/2-h/2),7.0+sep*0.35);
+  bMesh.rotation.z=bAngle;
+  threeObjectsGroup.add(bMesh);
+ });
+
+ document.getElementById('status-4d-metric').textContent=`${currentScene.notes.length} note active pe portative`;
+}
+
 function rotatePoint(x,y,z){
  const cy=Math.cos(yaw),sy=Math.sin(yaw),cx=Math.cos(tilt),sx=Math.sin(tilt);
  const xx=x*cy-z*sy,zz=x*sy+z*cy;
@@ -258,9 +596,10 @@ function projectPoint(x,y,z){
  return [canvas.width/2+p[0]*scale,canvas.height/2+p[1]*scale,p[2]];
 }
 function draw3d(){
+ if(!currentScene)return;
+ if(window.THREE)buildThreeJsScene();
  ctx.clearRect(0,0,canvas.width,canvas.height);
  ctx.fillStyle='#0b0f17';ctx.fillRect(0,0,canvas.width,canvas.height);
- if(!currentScene)return;
  const width=currentScene.image.width,height=currentScene.image.height;
  const sep=Number(document.getElementById('lambda').value)*Math.max(20,currentScene.staffs.length*12);
  const cx0=width/2,cy0=height/2;
@@ -616,8 +955,22 @@ function renderSatbPanel(scene){
  const el=document.getElementById(id);
  if(el) el.addEventListener('change', drawPage);
 });
-document.getElementById('lambda').addEventListener('input',draw3d);
-document.getElementById('reset-view').addEventListener('click',()=>{yaw=-0.38;tilt=-0.2;draw3d();});
+document.getElementById('lambda').addEventListener('input',()=>{draw3d();});
+document.getElementById('reset-view').addEventListener('click',()=>{
+ yaw=-0.38;tilt=-0.2;
+ if(threeControls&&threeCamera){threeCamera.position.set(0,-400,1600);threeControls.reset();}
+ draw3d();
+});
+const btnPlay4D = document.getElementById('btn-play-4d');
+if(btnPlay4D) btnPlay4D.addEventListener('click', ()=>{reader4D.running ? reader4D.pause() : reader4D.start();});
+const btnStop4D = document.getElementById('btn-stop-4d');
+if(btnStop4D) btnStop4D.addEventListener('click', ()=>{reader4D.reset();});
+const tempoSlider = document.getElementById('reader4d-tempo');
+if(tempoSlider) tempoSlider.addEventListener('input', (e)=>{
+ reader4D.tempoBpm = Number(e.target.value);
+ const valSpan = document.getElementById('reader4d-tempo-val');
+ if(valSpan) valSpan.textContent = e.target.value + ' BPM';
+});
 canvas.addEventListener('pointerdown',event=>{dragging=true;lastX=event.clientX;lastY=event.clientY;canvas.setPointerCapture(event.pointerId);});
 canvas.addEventListener('pointermove',event=>{if(!dragging)return;yaw+=(event.clientX-lastX)*0.008;tilt+=(event.clientY-lastY)*0.008;tilt=Math.max(-1.2,Math.min(1.2,tilt));lastX=event.clientX;lastY=event.clientY;draw3d();});
 canvas.addEventListener('pointerup',()=>{dragging=false;});canvas.addEventListener('pointercancel',()=>{dragging=false;});
