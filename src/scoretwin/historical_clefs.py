@@ -247,24 +247,35 @@ def detect_clef_glyph_at_staff_start(
     roi_bin = binary[y0:y1, x0:x1].copy()
     roi_gray = gray[y0:y1, x0:x1]
 
+    # Suppress thin horizontal staff lines with morphological opening so they don't merge with vertical barlines,
+    # while preserving vertical strokes, cusps, and crossbars of clef glyphs intact.
+    line_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (int(1.2 * sp), 1))
+    staff_lines_roi = cv2.morphologyEx(roi_bin, cv2.MORPH_OPEN, line_kernel)
+    roi_clean = cv2.subtract(roi_bin, staff_lines_roi)
+    roi_clean = cv2.morphologyEx(roi_clean, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 3)))
+
     # Find connected components inside ROI
-    count, labels, stats, centroids = cv2.connectedComponentsWithStats(roi_bin, 8)
+    count, labels, stats, centroids = cv2.connectedComponentsWithStats(roi_clean, 8)
     if count <= 1:
         return {"detected": False, "sign": "G", "line": 2, "confidence": 0.5, "reason": "No ink in clef ROI"}
 
-    # Filter for components with significant vertical height (clefs are tall)
+    # Filter for components with significant vertical height AND width (clefs are wide, barlines are narrow)
     min_clef_h = 2.2 * sp
+    min_clef_w = max(4, int(0.55 * sp))
     valid_clef_comps = []
     for comp_idx in range(1, count):
         bx, by, bw, bh, area = [int(v) for v in stats[comp_idx]]
-        if bh >= min_clef_h and area >= 0.8 * sp * sp:
+        if bh >= min_clef_h and bw >= min_clef_w and area >= 0.8 * sp * sp:
             valid_clef_comps.append((comp_idx, bx, by, bw, bh, area, centroids[comp_idx]))
 
     if not valid_clef_comps:
-        # Fallback to largest area component
+        # Fallback only if largest area component has non-trivial width (not a thin barline)
         largest_idx = max(range(1, count), key=lambda idx: stats[idx][4])
         bx, by, bw, bh, area = [int(v) for v in stats[largest_idx]]
-        valid_clef_comps = [(largest_idx, bx, by, bw, bh, area, centroids[largest_idx])]
+        if bw >= min_clef_w:
+            valid_clef_comps = [(largest_idx, bx, by, bw, bh, area, centroids[largest_idx])]
+        else:
+            return {"detected": False, "sign": "G", "line": 2, "confidence": 0.5, "reason": "No clef glyph detected"}
 
     # Choose leftmost prominent component as primary clef glyph
     primary = min(valid_clef_comps, key=lambda c: c[1])
@@ -279,7 +290,7 @@ def detect_clef_glyph_at_staff_start(
     # Very tall (typically >= 5.0 * sp), extends substantially above top line and below bottom line
     extends_above = (y0 + by) < (top_line - 1.2 * sp)
     extends_below = (y0 + by + bh) > (bot_line + 1.2 * sp)
-    if total_h >= 4.8 * sp and (extends_above or extends_below):
+    if total_h >= 4.8 * sp and bw >= 0.85 * sp and (extends_above or extends_below):
         # Determine anchor line: locate the central loop (widest horizontal portion)
         row_counts = np.sum(comp_mask, axis=1)
         widest_row = int(np.argmax(row_counts))

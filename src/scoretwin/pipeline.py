@@ -165,6 +165,8 @@ def analyze_array(
     for idx, s_obj in enumerate(staff_objects):
         if systems and idx < len(systems):
             s_obj["clef"] = systems[idx].get("inferred_clef")
+            s_obj["voice_name"] = systems[idx].get("voice_name")
+            s_obj["is_satb_choral"] = systems[idx].get("is_satb_choral", False)
 
     stem_candidates = detect_stem_candidates(
         binary,
@@ -577,6 +579,23 @@ def analyze_array(
         )
         if finger_info is not None:
             idsr_dynamic_layer["finger_occlusions"] = finger_info
+
+        # Filter note proposals that sit inside detected lyric bands without stems
+        if idsr_dynamic_layer.get("dynamic_lyrics_detected"):
+            lyric_intervals = [
+                (l["staff_index"], l["bbox_px"][1] - 4, l["bbox_px"][1] + l["bbox_px"][3] + 4)
+                for l in idsr_dynamic_layer["dynamic_lyrics_detected"]
+            ]
+            suppressed_ids = set()
+            for n in notes:
+                cy = float(n["center"][1])
+                s_idx = int(n.get("staff_index", 0))
+                has_stem = bool(n.get("stem_ids"))
+                if not has_stem and any(st == s_idx and y0 <= cy <= y1 for (st, y0, y1) in lyric_intervals):
+                    suppressed_ids.add(str(n["id"]))
+            if suppressed_ids:
+                notes = [n for n in notes if str(n["id"]) not in suppressed_ids]
+                primitives = [p for p in primitives if str(p["id"]) not in suppressed_ids]
         for l_idx, lyr in enumerate(idsr_dynamic_layer["dynamic_lyrics_detected"]):
             primitives.append({
                 "id": f"dynamic-lyric-{l_idx:04d}",

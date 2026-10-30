@@ -779,9 +779,22 @@ def group_staffs_into_systems(
     gaps = [float(staffs[i + 1].top - staffs[i].bottom) for i in range(n - 1)]
     med_sp = float(np.median([s.spacing for s in staffs]))
 
+    # Check if staves form a 4-staff choral system (SATB: Sopran, Alto, Tenor, Bas)
+    is_four_staff_satb = False
+    if n == 4:
+        even_gaps = [gaps[i] for i in range(0, len(gaps), 2)]
+        odd_gaps = [gaps[i] for i in range(1, len(gaps), 2)]
+        is_alternating = bool(odd_gaps and np.median(even_gaps) < 0.88 * np.median(odd_gaps))
+
+        x_left_band = binary[staffs[0].top : staffs[3].bottom + 1, : max(10, gray.shape[1] // 6)]
+        col_cov = (x_left_band > 0).mean(axis=0) if x_left_band.size else np.array([0.0])
+        # SATB choir scores have a continuous left bracket/barline spanning all 4 staves without alternating inter-system gaps
+        if float(np.max(col_cov)) >= 0.72 and not is_alternating:
+            is_four_staff_satb = True
+
     # Check if staves pair up into 2-staff systems (grand staff / choir system)
     paired_two_staff = False
-    if n % 2 == 0 and n >= 2:
+    if not is_four_staff_satb and n % 2 == 0 and n >= 2:
         if n == 2:
             # Check if left barline/brace connects the two staves
             x_left_band = binary[staffs[0].top : staffs[1].bottom + 1, : max(10, gray.shape[1] // 6)]
@@ -797,15 +810,29 @@ def group_staffs_into_systems(
                 # Evenly spaced grand-staff systems (common in hymnals/choir scores)
                 paired_two_staff = True
 
+    satb_names = ["Sopran", "Alto", "Tenor", "Bas"]
     metadata: list[dict] = []
     for idx, _staff in enumerate(staffs):
-        if paired_two_staff:
+        if is_four_staff_satb:
+            sys_idx = 0
+            staff_num = idx + 1
+            voice_name = satb_names[idx]
+            satb_default_clefs = [
+                {"sign": "G", "line": 2, "clef_id": "treble"},
+                {"sign": "G", "line": 2, "clef_id": "treble"},
+                {"sign": "G", "line": 2, "clef_id": "treble"},
+                {"sign": "F", "line": 4, "clef_id": "bass"},
+            ]
+            default_clef = satb_default_clefs[idx]
+        elif paired_two_staff:
             sys_idx = idx // 2
             staff_num = (idx % 2) + 1
+            voice_name = "Sopran / Alto" if staff_num == 1 else "Tenor / Bas"
             default_clef = {"sign": "G", "line": 2, "clef_id": "treble"} if staff_num == 1 else {"sign": "F", "line": 4, "clef_id": "bass"}
         else:
             sys_idx = idx
             staff_num = 1
+            voice_name = f"Voce {idx + 1}"
             default_clef = {"sign": "G", "line": 2, "clef_id": "treble"}
 
         clef_det = detect_clef_glyph_at_staff_start(
@@ -830,6 +857,8 @@ def group_staffs_into_systems(
             "staff_index": idx,
             "system_index": sys_idx,
             "staff_number_in_system": staff_num,
+            "voice_name": voice_name,
+            "is_satb_choral": is_four_staff_satb,
             "inferred_clef": clef,
         })
     return metadata

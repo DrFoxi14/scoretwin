@@ -50,10 +50,23 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
 </div>
 <div id="results" hidden>
 <div class="grid">
-<section class="panel"><h2>2D geometry editor</h2><p class="muted">Drag a proposal box to adjust its geometry. This edits the reconstruction proposal, not the preserved source file.</p><canvas id="pageCanvas" width="1100" height="400" aria-label="Draggable notehead proposals over the source page"></canvas></section>
+<section class="panel"><h2>2D geometry & notation editor</h2><p class="muted">Drag a proposal box to adjust its geometry. Layers are displayed without modifying the preserved source file.</p>
+<div style="display:flex;gap:14px;flex-wrap:wrap;margin:10px 0;font-size:13px;align-items:center;background:#10131a;padding:8px 12px;border-radius:8px;border:1px solid #303949">
+  <span style="font-weight:600;color:#9da8b9">Straturi vizuale:</span>
+  <label style="cursor:pointer;display:inline-flex;align-items:center;gap:5px"><input id="show-notes" type="checkbox" checked> <span style="color:#e56f79">■</span> Note & Înălțimi</label>
+  <label style="cursor:pointer;display:inline-flex;align-items:center;gap:5px"><input id="show-lyrics" type="checkbox" checked> <span style="color:#34d399">■</span> Versuri / Text (Română)</label>
+  <label style="cursor:pointer;display:inline-flex;align-items:center;gap:5px"><input id="show-satb" type="checkbox" checked> <span style="color:#a78bfa">■</span> Voci SATB & Chei</label>
+  <label style="cursor:pointer;display:inline-flex;align-items:center;gap:5px"><input id="show-fingers" type="checkbox" checked> <span style="color:#38bdf8">■</span> Ocluzii Degete</label>
+</div>
+<canvas id="pageCanvas" width="1100" height="400" aria-label="Draggable notehead proposals over the source page"></canvas></section>
 <section class="panel"><h2>Scene summary</h2><pre id="summary"></pre><div><a id="download" download="provisional.musicxml">Download provisional MusicXML</a></div><button id="export-scene" type="button">Download edited scene JSON</button><button id="reset-edits" type="button">Reset edits</button></section>
 </div>
-<section class="panel"><h2>Structural 2D render</h2>
+<section class="panel" id="satb-panel" hidden>
+<h2>Ansamblu Coral SATB & Strat Versuri (Română)</h2>
+<p class="muted">Descompunere arhitecturală polifonică (Sopran, Alto, Tenor, Bas) și aliniere silabică conform tezei IDSR.</p>
+<div style="font-size:12px;color:#34d399;background:rgba(52,211,153,0.1);border:1px solid #34d399;border-radius:8px;padding:8px;margin-bottom:12px">✅ Suport text & diacritice românești (ă, â, î, ș, ț) activat în UTF-8. Silabele și cratimele sunt legate direct de note.</div>
+<div id="satb-details" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:10px"></div>
+</section>
 <p class="muted">Only currently modeled staff lines, barlines and notehead proposals are drawn. This is not yet a pixel-identical replica; the source raster remains the identity anchor.</p>
 <img id="geometry-render" alt="Structural render of currently modeled primitives">
 <button id="render-current" type="button">Render current geometry</button>
@@ -119,18 +132,58 @@ function drawPage(){
  pageCtx.clearRect(0,0,pageCanvas.width,pageCanvas.height);
  pageCtx.drawImage(sourcePreview,0,0,pageCanvas.width,pageCanvas.height);
  const sx=pageCanvas.width/currentScene.image.width,sy=pageCanvas.height/currentScene.image.height;
- currentScene.notes.forEach((note,index)=>{
-  const box=note.bbox,x=box[0]*sx,y=box[1]*sy,w=box[2]*sx,h=box[3]*sy;
-  pageCtx.strokeStyle=index===draggingNote?'#b7f36b':'#e56f79';pageCtx.lineWidth=Math.max(1.4,pageCanvas.width/900);
-  pageCtx.strokeRect(x,y,w,h);
-  pageCtx.fillStyle='#e56f79';pageCtx.font=(Math.max(10,pageCanvas.width/100))+'px system-ui';
-  pageCtx.fillText(note.pitch.step+note.pitch.octave+'?',x,y-3<10?y+h+12:y-3);
- });
+ const showNotes=document.getElementById('show-notes')?.checked??true;
+ const showLyrics=document.getElementById('show-lyrics')?.checked??true;
+ const showSatb=document.getElementById('show-satb')?.checked??true;
+ const showFingers=document.getElementById('show-fingers')?.checked??true;
+
+ if(showSatb && currentScene.staffs){
+  currentScene.staffs.forEach((st, sidx)=>{
+   const vName = st.voice_name || (currentScene.systems?.[sidx]?.voice_name) || ('Portativ ' + (sidx+1));
+   const clefInfo = st.clef || (currentScene.systems?.[sidx]?.inferred_clef) || {sign:'G', line:2};
+   const clefLabel = clefInfo.sign + clefInfo.line;
+   const badgeText = '🎼 ' + vName + ' [' + clefLabel + ']';
+   const bx = 12 * sx, by = (st.top - 6) * sy;
+   pageCtx.fillStyle = '#a78bfa';
+   pageCtx.font = 'bold ' + Math.max(10, pageCanvas.width/90) + 'px system-ui';
+   pageCtx.fillText(badgeText, bx, by > 14 ? by : (st.bottom + 14) * sy);
+  });
+ }
+
+ if(showNotes){
+  currentScene.notes.forEach((note,index)=>{
+   const box=note.bbox,x=box[0]*sx,y=box[1]*sy,w=box[2]*sx,h=box[3]*sy;
+   pageCtx.strokeStyle=index===draggingNote?'#b7f36b':'#e56f79';pageCtx.lineWidth=Math.max(1.4,pageCanvas.width/900);
+   pageCtx.strokeRect(x,y,w,h);
+   pageCtx.fillStyle='#e56f79';pageCtx.font=(Math.max(10,pageCanvas.width/100))+'px system-ui';
+   pageCtx.fillText(note.pitch.step+note.pitch.octave+'?',x,y-3<10?y+h+12:y-3);
+  });
+ }
+
  currentScene.unknown_objects.forEach(item=>{
   const x=item.bbox[0]*sx,y=item.bbox[1]*sy,w=item.bbox[2]*sx,h=item.bbox[3]*sy;
   pageCtx.strokeStyle='#e3b35b';pageCtx.lineWidth=1;pageCtx.strokeRect(x,y,w,h);
  });
- if(currentScene.finger_occlusions&&currentScene.finger_occlusions.detected_fingers){
+
+ if(showLyrics && currentScene.idsr_dynamic_layer && currentScene.idsr_dynamic_layer.dynamic_lyrics_detected){
+  currentScene.idsr_dynamic_layer.dynamic_lyrics_detected.forEach(item=>{
+   const lb = item.bbox_px, lx = lb[0]*sx, ly = lb[1]*sy, lw = lb[2]*sx, lh = lb[3]*sy;
+   pageCtx.strokeStyle = '#34d399';
+   pageCtx.lineWidth = 1.2;
+   pageCtx.strokeRect(lx, ly, lw, lh);
+   if(item.kind === 'lyric_hyphen'){
+    pageCtx.fillStyle = '#34d399';
+    pageCtx.font = 'bold ' + Math.max(10, pageCanvas.width/100) + 'px system-ui';
+    pageCtx.fillText('-', lx + 2, ly + lh - 1);
+   } else {
+    pageCtx.fillStyle = '#34d399';
+    pageCtx.font = (Math.max(8, pageCanvas.width/130)) + 'px system-ui';
+    pageCtx.fillText('silabă', lx + 1, ly - 2 < 8 ? ly + lh + 9 : ly - 2);
+   }
+  });
+ }
+
+ if(showFingers && currentScene.finger_occlusions && currentScene.finger_occlusions.detected_fingers){
   currentScene.finger_occlusions.detected_fingers.forEach(f=>{
    const fb=f.bbox_px,fx=fb[0]*sx,fy=fb[1]*sy,fw=fb[2]*sx,fh=fb[3]*sy;
    pageCtx.strokeStyle='#38bdf8';pageCtx.lineWidth=2;pageCtx.setLineDash([4,3]);
@@ -329,7 +382,7 @@ form.addEventListener('submit',async(event)=>{
   document.getElementById('download-residual').disabled=!residualPngBase64;
   document.getElementById('download-identity-report').disabled=!identityReportJson;
   setDownload(result.musicxml);document.getElementById('results').hidden=false;
-  buildEditor();draw3d();
+  buildEditor();draw3d();renderSatbPanel(currentScene);
   status.textContent='Analysis finished. Review every pitch and all warnings before using the MusicXML.';
  }catch(error){status.textContent=error.message||String(error);}
  finally{button.disabled=false;}
@@ -339,6 +392,33 @@ function setDownload(xml){
  const anchor=document.getElementById('download');if(anchor.dataset.url)URL.revokeObjectURL(anchor.dataset.url);
  anchor.href=url;anchor.dataset.url=url;
 }
+function renderSatbPanel(scene){
+ const panel = document.getElementById('satb-panel');
+ const container = document.getElementById('satb-details');
+ if(!panel || !container || !scene || !scene.staffs) return;
+ container.innerHTML = '';
+ const lyrics = (scene.idsr_dynamic_layer && scene.idsr_dynamic_layer.dynamic_lyrics_detected) || [];
+ scene.staffs.forEach((st, idx)=>{
+  const vName = st.voice_name || scene.systems?.[idx]?.voice_name || ('Portativ ' + (idx + 1));
+  const clef = st.clef || scene.systems?.[idx]?.inferred_clef || {sign:'G', line:2};
+  const staffNotes = (scene.notes || []).filter(n=>n.staff_index === idx);
+  const staffLyrics = lyrics.filter(l=>l.staff_index === idx);
+  const card = document.createElement('div');
+  card.style = 'background:#10131a;border:1px solid #303949;border-radius:10px;padding:12px';
+  card.innerHTML = `
+    <div style="font-weight:700;color:#a78bfa;font-size:15px;margin-bottom:4px">🎵 ${vName}</div>
+    <div style="font-size:12px;color:#9da8b9;margin-bottom:8px">Cheie: <b style="color:#edf0f6">${clef.sign}${clef.line}</b> (${clef.clef_id || 'standard'})</div>
+    <div style="font-size:12px;color:#ced7e5">Note recunoscute: <b>${staffNotes.length}</b></div>
+    <div style="font-size:12px;color:#34d399">Silabe / cratime text: <b>${staffLyrics.length}</b></div>
+  `;
+  container.appendChild(card);
+ });
+ panel.hidden = false;
+}
+['show-notes','show-lyrics','show-satb','show-fingers'].forEach(id=>{
+ const el=document.getElementById(id);
+ if(el) el.addEventListener('change', drawPage);
+});
 document.getElementById('lambda').addEventListener('input',draw3d);
 document.getElementById('reset-view').addEventListener('click',()=>{yaw=-0.38;tilt=-0.2;draw3d();});
 canvas.addEventListener('pointerdown',event=>{dragging=true;lastX=event.clientX;lastY=event.clientY;canvas.setPointerCapture(event.pointerId);});
