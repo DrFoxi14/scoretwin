@@ -804,7 +804,9 @@ def group_staffs_into_systems(
         else:
             even_gaps = [gaps[i] for i in range(0, len(gaps), 2)]
             odd_gaps = [gaps[i] for i in range(1, len(gaps), 2)]
-            if odd_gaps and np.median(even_gaps) < 0.88 * np.median(odd_gaps):
+            # In choral hymnals, lyrics placed between Soprano/Alto and Tenor/Bass can make intra-system gaps
+            # larger than inter-system gaps, or vice-versa. Both exhibit clear alternating gap structures.
+            if odd_gaps and (np.median(even_gaps) < 0.88 * np.median(odd_gaps) or np.median(odd_gaps) < 0.88 * np.median(even_gaps)):
                 paired_two_staff = True
             elif float(np.max(gaps) - np.min(gaps)) <= 2.5 * med_sp:
                 # Evenly spaced grand-staff systems (common in hymnals/choir scores)
@@ -814,25 +816,31 @@ def group_staffs_into_systems(
     metadata: list[dict] = []
     for idx, _staff in enumerate(staffs):
         if is_four_staff_satb:
-            sys_idx = 0
-            staff_num = idx + 1
-            voice_name = satb_names[idx]
+            sys_idx = idx // 4
+            staff_num = (idx % 4) + 1
+            voice_name = satb_names[staff_num - 1]
+            part_id = f"P{staff_num}"
+            part_name = voice_name
             satb_default_clefs = [
                 {"sign": "G", "line": 2, "clef_id": "treble"},
                 {"sign": "G", "line": 2, "clef_id": "treble"},
                 {"sign": "G", "line": 2, "clef_id": "treble"},
                 {"sign": "F", "line": 4, "clef_id": "bass"},
             ]
-            default_clef = satb_default_clefs[idx]
+            default_clef = satb_default_clefs[staff_num - 1]
         elif paired_two_staff:
             sys_idx = idx // 2
             staff_num = (idx % 2) + 1
             voice_name = "Sopran / Alto" if staff_num == 1 else "Tenor / Bas"
+            part_id = f"P{staff_num}"
+            part_name = voice_name
             default_clef = {"sign": "G", "line": 2, "clef_id": "treble"} if staff_num == 1 else {"sign": "F", "line": 4, "clef_id": "bass"}
         else:
             sys_idx = idx
             staff_num = 1
             voice_name = f"Voce {idx + 1}"
+            part_id = f"P{idx + 1}"
+            part_name = voice_name
             default_clef = {"sign": "G", "line": 2, "clef_id": "treble"}
 
         clef_det = detect_clef_glyph_at_staff_start(
@@ -858,6 +866,8 @@ def group_staffs_into_systems(
             "system_index": sys_idx,
             "staff_number_in_system": staff_num,
             "voice_name": voice_name,
+            "part_id": part_id,
+            "part_name": part_name,
             "is_satb_choral": is_four_staff_satb,
             "inferred_clef": clef,
         })

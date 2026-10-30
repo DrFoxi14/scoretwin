@@ -164,9 +164,36 @@ def analyze_array(
     systems = group_staffs_into_systems(gray, binary, staffs) if enable_extended_notation else []
     for idx, s_obj in enumerate(staff_objects):
         if systems and idx < len(systems):
-            s_obj["clef"] = systems[idx].get("inferred_clef")
-            s_obj["voice_name"] = systems[idx].get("voice_name")
-            s_obj["is_satb_choral"] = systems[idx].get("is_satb_choral", False)
+            sys_info = systems[idx]
+            s_obj["system_index"] = sys_info.get("system_index", idx)
+            s_obj["staff_number"] = sys_info.get("staff_number_in_system", 1)
+            s_obj["part_id"] = sys_info.get("part_id", f"P{idx + 1}")
+            s_obj["part_name"] = sys_info.get("part_name", sys_info.get("voice_name"))
+            s_obj["clef"] = sys_info.get("inferred_clef")
+            s_obj["voice_name"] = sys_info.get("voice_name")
+            s_obj["is_satb_choral"] = sys_info.get("is_satb_choral", False)
+
+    # Reconcile barlines within each multi-staff system to enforce consistent measure bounds
+    if systems:
+        system_indices = sorted({s.get("system_index", 0) for s in staff_objects})
+        for sys_idx in system_indices:
+            sys_staves = [s for s in staff_objects if s.get("system_index", 0) == sys_idx]
+            if len(sys_staves) > 1:
+                all_bars = []
+                for s in sys_staves:
+                    all_bars.extend(s.get("barlines", []))
+                if all_bars:
+                    all_bars.sort()
+                    med_sp = float(np.median([s.get("spacing", 16.0) for s in sys_staves]))
+                    clusters: list[list[int]] = []
+                    for b in all_bars:
+                        if not clusters or b - clusters[-1][-1] > 1.8 * med_sp:
+                            clusters.append([b])
+                        else:
+                            clusters[-1].append(b)
+                    consensus_bars = [int(round(float(np.median(c)))) for c in clusters]
+                    for s in sys_staves:
+                        s["barlines"] = list(consensus_bars)
 
     stem_candidates = detect_stem_candidates(
         binary,
@@ -1170,7 +1197,7 @@ def process_file(
         "gltf_semantic_depth_is_physical": False,
     }
     (output / "scene.json").write_text(json.dumps(scene, indent=2, ensure_ascii=False), encoding="utf-8")
-    musicxml = build_musicxml(scene)
+    musicxml = build_musicxml(scene, musescore_compat=True)
     (output / "provisional.musicxml").write_text(musicxml, encoding="utf-8")
 
     # Verify the immutable source copy before reporting completion.

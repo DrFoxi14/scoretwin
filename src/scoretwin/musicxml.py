@@ -182,7 +182,7 @@ def _event_groups(notes: list[dict]) -> tuple[list[list[dict]], bool]:
     return groups, explicit_onsets
 
 
-def _write_voice(measure: ET.Element, notes: list[dict], voice_number: int) -> int:
+def _write_voice(measure: ET.Element, notes: list[dict], voice_number: int, musescore_compat: bool = False) -> int:
     groups, explicit_onsets = _event_groups(notes)
     cursor = 0
     for group in groups:
@@ -236,11 +236,7 @@ def _write_voice(measure: ET.Element, notes: list[dict], voice_number: int) -> i
             staff_number = note.get("_staff_number")
             if staff_number is not None:
                 _sub(xml_note, "staff", staff_number)
-            if note.get("lyric_text"):
-                lyric_elem = _sub(xml_note, "lyric", number=1)
-                _sub(lyric_elem, "syllabic", note.get("lyric_syllabic", "single"))
-                _sub(lyric_elem, "text", str(note["lyric_text"]))
-            notations = _sub(xml_note, "notations")
+
             review = _review_fields(note)
             message = "IDSR_REVIEW: " + (", ".join(review) if review else "confirm source alignment and interpretation")
             duration_hypothesis = (note.get("duration_hypothesis") or {}).get("candidate", "unresolved")
@@ -250,13 +246,25 @@ def _write_voice(measure: ET.Element, notes: list[dict], voice_number: int) -> i
             )
             if note.get("_inferred_chord"):
                 message += " Chord membership was inferred geometrically and needs review."
-            _sub(notations, "other-notation", message, type="single")
+
+            # MusicXML DTD element ordering requires <notations> to precede <lyric>
+            if not musescore_compat:
+                notations = _sub(xml_note, "notations")
+                _sub(notations, "other-notation", message, type="single")
+            else:
+                measure.append(ET.Comment(f" {message} "))
+
+            if note.get("lyric_text"):
+                lyric_elem = _sub(xml_note, "lyric", number=1)
+                _sub(lyric_elem, "syllabic", note.get("lyric_syllabic", "single"))
+                _sub(lyric_elem, "text", str(note["lyric_text"]))
+
             event_end = max(event_end, start + duration)
         cursor = max(cursor, event_end)
     return cursor
 
 
-def build_musicxml(scene: dict) -> str:
+def build_musicxml(scene: dict, musescore_compat: bool = False) -> str:
     """Serialize annotated scene events as MusicXML 4.0.
 
     The exporter preserves explicit chord groups, voice numbers, pitch alters,
@@ -307,6 +315,31 @@ def build_musicxml(scene: dict) -> str:
         _sub(score_part, "part-name", name or f"Detected part {part_index}")
         part_specs.append((part_id, part_staffs))
 
+    # Establish a global measure timeline across all systems and staves
+    all_systems: dict[int, list[dict]] = defaultdict(list)
+    for staff in staffs:
+        all_systems[_system_index(staff)].append(staff)
+
+    global_measure_keys: set[tuple[int, int]] = set()
+    for sys_idx, sys_staff_list in all_systems.items():
+        max_bars = max((len(s.get("barlines", [])) for s in sys_staff_list), default=0)
+        for m_idx in range(max_bars + 1):
+            global_measure_keys.add((sys_idx, m_idx))
+
+    for note in notes:
+        s_idx = _as_int(note.get("staff_index", 0), "Note staff index", 0)
+        if s_idx < len(staffs):
+            staff = staffs[s_idx]
+            sys_idx = _system_index(staff)
+            x = float(note.get("center", [0])[0])
+            boundaries = sorted(float(value) for value in staff.get("barlines", []))
+            local_measure = sum(1 for boundary in boundaries if x > boundary)
+            global_measure_keys.add((sys_idx, local_measure))
+
+    if not global_measure_keys:
+        global_measure_keys.add((0, 0))
+    ordered_global_measure_keys = sorted(global_measure_keys)
+
     for part_id, part_staffs in part_specs:
         systems: dict[int, list[tuple[int, dict]]] = defaultdict(list)
         for staff_index, staff in part_staffs:
@@ -349,26 +382,19 @@ def build_musicxml(scene: dict) -> str:
                     annotated["lyric_syllabic"] = "middle" if closest["kind"] == "lyric_hyphen" else "single"
             notes_by_measure[measure_key].append(annotated)
 
-        measure_keys: set[tuple[int, int]] = set(notes_by_measure)
-        for system, system_staffs in systems.items():
-            count = max((len(staff.get("barlines", [])) + 1 for _, staff in system_staffs), default=1)
-            measure_keys.update((system, index) for index in range(count))
-        if not measure_keys:
-            measure_keys.add((0, 0))
-        ordered_measure_keys = sorted(measure_keys)
-
         part = _sub(root, "part", id=part_id)
         previous_system = None
-        for output_measure, measure_key in enumerate(ordered_measure_keys, start=1):
+        for output_measure, measure_key in enumerate(ordered_global_measure_keys, start=1):
             system, local_measure = measure_key
             measure = _sub(part, "measure", number=output_measure)
             is_new_system = previous_system is not None and system != previous_system
             if is_new_system:
                 _sub(measure, "print", new_system="yes")
             if output_measure == 1 or is_new_system:
-                part_attributes_staffs = sorted(systems[system], key=lambda item: (staff_numbers[item[0]], _staff_top(item[1])))
+                sys_candidates = systems[system] if system in systems else part_staffs
+                part_attributes_staffs = sorted(sys_candidates, key=lambda item: (staff_numbers.get(item[0], 1), _staff_top(item[1])))
                 _add_attributes(measure, [staff for _, staff in part_attributes_staffs], {
-                    order: staff_numbers[index] for order, (index, staff) in enumerate(part_attributes_staffs)
+                    order: staff_numbers.get(index, 1) for order, (index, staff) in enumerate(part_attributes_staffs)
                 })
             previous_system = system
 
@@ -378,10 +404,17 @@ def build_musicxml(scene: dict) -> str:
                 voice = _voice_number(note, staff_number)
                 by_voice[voice].append(note)
             voices = sorted(by_voice)
-            for voice_index, voice in enumerate(voices):
-                end = _write_voice(measure, by_voice[voice], voice)
-                if voice_index < len(voices) - 1 and end > 0:
-                    backup = _sub(measure, "backup")
-                    _sub(backup, "duration", end)
+            if not voices:
+                # Emit whole-measure rest so every part has identical measures without invalid 0/1 durations
+                rest_note = _sub(measure, "note")
+                _sub(rest_note, "rest", measure="yes")
+                _sub(rest_note, "duration", 4)
+                _sub(rest_note, "voice", 1)
+            else:
+                for voice_index, voice in enumerate(voices):
+                    end = _write_voice(measure, by_voice[voice], voice, musescore_compat=musescore_compat)
+                    if voice_index < len(voices) - 1 and end > 0:
+                        backup = _sub(measure, "backup")
+                        _sub(backup, "duration", end)
 
     return ET.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")

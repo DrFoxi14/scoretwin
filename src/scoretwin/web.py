@@ -540,13 +540,14 @@ async def analyze(
         with tempfile.TemporaryDirectory(prefix="scoretwin-") as directory:
             input_path = Path(directory) / ("source" + suffix)
             input_path.write_bytes(contents)
-            gray = load_grayscale(input_path, page=page)
+            page_index = max(0, page - 1)
+            gray = load_grayscale(input_path, page=page_index)
             bundle_dir = Path(directory) / "bundle"
             model_path = Path(MODEL_PATH) if MODEL_PATH and Path(MODEL_PATH).exists() else None
             analysis_result = process_file(
                 input_path,
                 bundle_dir,
-                page=page,
+                page=page_index,
                 model_path=model_path,
                 rectify_corners=corners,
                 auto_substrate=auto_substrate,

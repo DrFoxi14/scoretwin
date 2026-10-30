@@ -100,3 +100,29 @@ def test_satb_four_staff_choir_detection_and_romanian_lyrics() -> None:
     res_u16 = (res_signed + 255).astype(np.uint16)
     recon = np.clip(gz.astype(np.int32) + res_u16.astype(np.int32) - 255, 0, 255).astype(np.uint8)
     assert np.array_equal(recon, gray), "Lossless recomposition must be bit-exact (0.0 px error)"
+
+    # 4. MusicXML Validation with MuseScore Compatibility
+    from scoretwin.musicxml import build_musicxml
+    import xml.etree.ElementTree as ET
+    from pathlib import Path
+    import subprocess
+
+    xml_str = build_musicxml(scene, musescore_compat=True)
+    root = ET.fromstring(xml_str)
+    parts = root.findall("part")
+    assert len(parts) >= 1
+    # Check that every part has the exact same number of measures
+    measure_counts = {len(p.findall("measure")) for p in parts}
+    assert len(measure_counts) == 1, f"All parts must have identical measure count, got {measure_counts}"
+
+    # If MuseScore is installed, verify conversion succeeds with exit code 0
+    mscore_bin = Path("/Applications/MuseScore 4.app/Contents/MacOS/mscore")
+    if mscore_bin.exists():
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            in_xml = Path(td) / "score.musicxml"
+            out_mscz = Path(td) / "score.mscz"
+            in_xml.write_text(xml_str, encoding="utf-8")
+            res_mscore = subprocess.run([str(mscore_bin), str(in_xml), "-o", str(out_mscz)], capture_output=True)
+            assert res_mscore.returncode == 0, f"MuseScore failed with error: {res_mscore.stderr.decode()}"
+            assert out_mscz.exists() and out_mscz.stat().st_size > 0
