@@ -483,14 +483,38 @@ def build_gltf(
             )
             _add_node(primitive, vertices, indices, material_by_kind[kind], z)
         elif kind == "beam":
-            x0 = float(geometry.get("x0_px", 0))
-            y0 = float(geometry.get("y0_px", 0))
-            x1 = float(geometry.get("x1_px", x0 + 8.0))
-            y1 = float(geometry.get("y1_px", y0))
-            thickness = max(1.5, float(geometry.get("thickness_px_estimate", 3.5)))
+            sub_beams = geometry.get("sub_beams")
             z = layer_separation * (1.25 + max(0, staff_index) * 0.15)
-            vertices, indices = _segment(x0, y0, x1, y1, thickness, z, page_height)
-            _add_node(primitive, vertices, indices, material_by_kind[kind], z)
+            if sub_beams and len(sub_beams) > 1:
+                all_v = []
+                all_i = []
+                for sb in sub_beams:
+                    sx0, sy0, sw, sh = [float(v) for v in sb]
+                    v, idx = _rectangle_outline(sx0, sy0, max(2.0, sw), max(2.0, sh), z, page_height)
+                    offset = len(all_v)
+                    all_v.extend(v)
+                    all_i.extend(idx + offset)
+                _add_node(primitive, np.array(all_v, dtype=np.float32), np.array(all_i, dtype=np.uint32), material_by_kind[kind], z)
+            elif geometry.get("beam_count", 1) == 2:
+                x0 = float(geometry.get("x0_px", 0))
+                y0 = float(geometry.get("y0_px", 0))
+                x1 = float(geometry.get("x1_px", x0 + 8.0))
+                y1 = float(geometry.get("y1_px", y0))
+                thickness = max(1.5, float(geometry.get("thickness_px_estimate", 3.5)) * 0.45)
+                sep_beam = thickness * 1.6
+                v1, i1 = _segment(x0, y0 - sep_beam / 2.0, x1, y1 - sep_beam / 2.0, thickness, z, page_height)
+                v2, i2 = _segment(x0, y0 + sep_beam / 2.0, x1, y1 + sep_beam / 2.0, thickness, z, page_height)
+                v = np.vstack([v1, v2])
+                i = np.concatenate([i1, i2 + len(v1)])
+                _add_node(primitive, v, i, material_by_kind[kind], z)
+            else:
+                x0 = float(geometry.get("x0_px", 0))
+                y0 = float(geometry.get("y0_px", 0))
+                x1 = float(geometry.get("x1_px", x0 + 8.0))
+                y1 = float(geometry.get("y1_px", y0))
+                thickness = max(1.5, float(geometry.get("thickness_px_estimate", 3.5)))
+                vertices, indices = _segment(x0, y0, x1, y1, thickness, z, page_height)
+                _add_node(primitive, vertices, indices, material_by_kind[kind], z)
         elif kind == "accidental":
             bbox = geometry.get("bbox_px", [0, 0, 6, 10])
             x, y, width, height = [float(value) for value in bbox]

@@ -126,3 +126,50 @@ def test_satb_four_staff_choir_detection_and_romanian_lyrics() -> None:
             res_mscore = subprocess.run([str(mscore_bin), str(in_xml), "-o", str(out_mscz)], capture_output=True)
             assert res_mscore.returncode == 0, f"MuseScore failed with error: {res_mscore.stderr.decode()}"
             assert out_mscz.exists() and out_mscz.stat().st_size > 0
+
+
+def test_sixteenth_note_double_beams_and_digital_pdf_export() -> None:
+    """Verify sixteenth notes with 2 parallel beam bars are detected as double beams (not dots),
+
+    and that compile_digital_score_pdf produces a clean digital score PDF.
+    """
+    from scoretwin.pipeline import compile_digital_score_pdf
+    from pathlib import Path
+    import tempfile
+
+    h, w = 400, 600
+    sp = 16.0
+    gray = np.full((h, w), 250, dtype=np.uint8)
+    lines = [100 + i * int(sp) for i in range(5)]
+    staff = StaffSystem(index=0, lines=tuple(lines), spacing=sp)
+    for ly in lines:
+        cv2.line(gray, (50, ly), (550, ly), 40, 1)
+
+    # Two sixteenth notes connected by 2 parallel beams (șaisprezecimi: 2 bare paralele)
+    # Note 1 at x=180, Note 2 at x=230
+    cv2.ellipse(gray, (180, 132), (7, 5), -20, 0, 360, 30, -1)
+    cv2.line(gray, (186, 132), (186, 80), 30, 2)
+    cv2.ellipse(gray, (230, 132), (7, 5), -20, 0, 360, 30, -1)
+    cv2.line(gray, (236, 132), (236, 80), 30, 2)
+
+    # Beam 1 (upper bar): from x=185 to x=238 at y=76
+    cv2.rectangle(gray, (185, 73), (238, 79), 30, -1)
+    # Beam 2 (lower parallel bar): from x=185 to x=238 at y=85
+    cv2.rectangle(gray, (185, 83), (238, 89), 30, -1)
+
+    scene = analyze_array(gray, adaptive_staffs=True, enable_extended_notation=True)
+    assert len(scene["beams"]) >= 1, "Must detect sixteenth note beam group"
+    sixteenth_beam = next((b for b in scene["beams"] if b.get("beam_count") == 2), None)
+    assert sixteenth_beam is not None, "Sixteenth note beam group must have beam_count == 2"
+
+    # Crucial: dots detector must NOT turn the 16th-note beam into false dots ("cercuri")
+    assert len(scene["dots"]) == 0, "No augmentation dots should be hallucinated on sixteenth note beams"
+
+    with tempfile.TemporaryDirectory() as td:
+        pdf_out = Path(td) / "test_digital.pdf"
+        res = compile_digital_score_pdf(scene, pdf_out)
+        assert res is not None
+        assert pdf_out.exists()
+        pdf_bytes = pdf_out.read_bytes()
+        assert pdf_bytes.startswith(b"%PDF"), "Must compile a valid PDF"
+        assert len(pdf_bytes) > 500

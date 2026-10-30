@@ -486,16 +486,133 @@ def detect_beams_and_dots(
                     "note_ids": list(dict.fromkeys(s1["associated_note_ids"] + s2["associated_note_ids"])),
                     "beam_count": beam_count,
                     "direction": dir1,
+                    "bbox": [int(min(tx1, tx2)), int(min(ty1, ty2) - mean_thick / 2.0), int(abs(tx2 - tx1)), int(abs(ty2 - ty1) + mean_thick)],
                     "geometry": {
                         "x0_px": round(tx1, 3),
                         "y0_px": round(ty1, 3),
                         "x1_px": round(tx2, 3),
                         "y1_px": round(ty2, 3),
                         "thickness_px_estimate": round(mean_thick, 3),
+                        "beam_count": beam_count,
+                        "sub_beams": [[int(min(tx1, tx2)), int(min(ty1, ty2)), int(abs(tx2 - tx1)), int(max(2, mean_thick))]],
                     },
                 })
 
-    # 2. Detect augmentation dots immediately to the right of noteheads
+    # 2. Direct Optical Beam Detection from clean foreground connected components
+    # Captures printed/engraved beams even when stems are slanted, broken or unassociated
+    optical_beam_candidates: list[dict] = []
+    for staff in staffs:
+        staff_index = int(staff.index)
+        sp = float(staff.spacing)
+        top_limit = max(0, int(round(staff.top - 3.5 * sp)))
+        bottom_limit = min(height, int(round(staff.bottom + 3.5 * sp)))
+        roi = clean[top_limit:bottom_limit, :]
+        num_l, _labels, stats, centroids = cv2.connectedComponentsWithStats(roi, 8)
+        for comp_i in range(1, num_l):
+            bx, by, bw, bh, area = stats[comp_i]
+            cx, cy = centroids[comp_i]
+            min_thick = max(6, int(round(0.30 * sp)))
+            if (
+                bw >= 1.35 * sp
+                and bw <= 25.0 * sp
+                and bh >= min_thick
+                and bh <= 2.5 * sp
+                and (bw / max(1, bh)) >= 1.6
+                and area >= int(0.20 * sp * sp)
+            ):
+                optical_beam_candidates.append({
+                    "staff_index": staff_index,
+                    "bbox": [int(bx), int(by + top_limit), int(bw), int(bh)],
+                    "center": [float(cx), float(cy + top_limit)],
+                    "thickness": int(bh),
+                    "area": int(area),
+                })
+
+    # Group parallel double beams (sixteenth notes: 2 bare paralele)
+    skip_opt = set()
+    for i, b1 in enumerate(optical_beam_candidates):
+        if i in skip_opt:
+            continue
+        sp = float(staffs[b1["staff_index"]].spacing)
+        x1_min, y1_min, w1, h1 = b1["bbox"]
+        x1_max = x1_min + w1
+        y1_max = y1_min + h1
+
+        paired_beam = None
+        for j, b2 in enumerate(optical_beam_candidates):
+            if j <= i or j in skip_opt or b2["staff_index"] != b1["staff_index"]:
+                continue
+            x2_min, y2_min, w2, h2 = b2["bbox"]
+            x2_max = x2_min + w2
+            overlap_x = max(0, min(x1_max, x2_max) - max(x1_min, x2_min))
+            if overlap_x >= 0.40 * min(w1, w2) and abs(b2["center"][1] - b1["center"][1]) <= 1.65 * sp:
+                paired_beam = (j, b2)
+                break
+
+        if paired_beam:
+            j, b2 = paired_beam
+            skip_opt.add(j)
+            comb_x0 = min(x1_min, b2["bbox"][0])
+            comb_x1 = max(x1_max, b2["bbox"][0] + b2["bbox"][2])
+            comb_y0 = min(y1_min, b2["bbox"][1])
+            comb_y1 = max(y1_max, b2["bbox"][1] + b2["bbox"][3])
+            sub_b = [b1["bbox"], b2["bbox"]]
+            sub_b.sort(key=lambda b: b[1])
+            beam_count = 2
+            mean_thick = float(max(h1, b2["thickness"]))
+            y0_cen = float(min(b1["center"][1], b2["center"][1]))
+            y1_cen = float(max(b1["center"][1], b2["center"][1]))
+            box = [comb_x0, comb_y0, comb_x1 - comb_x0, comb_y1 - comb_y0]
+        else:
+            beam_count = 2 if b1["thickness"] >= 0.60 * sp else 1
+            mean_thick = float(h1)
+            comb_x0, comb_x1 = x1_min, x1_max
+            y0_cen = y1_cen = float(b1["center"][1])
+            sub_b = [b1["bbox"]]
+            box = b1["bbox"]
+
+        # Check if already covered by an existing stem-to-stem beam
+        already_covered = False
+        for ex_b in beams:
+            if ex_b["staff_index"] == b1["staff_index"]:
+                ex_x0 = ex_b["geometry"]["x0_px"]
+                ex_x1 = ex_b["geometry"]["x1_px"]
+                if max(0, min(comb_x1, ex_x1) - max(comb_x0, ex_x0)) >= 0.50 * min(comb_x1 - comb_x0, ex_x1 - ex_x0):
+                    already_covered = True
+                    ex_b["beam_count"] = max(ex_b["beam_count"], beam_count)
+                    ex_b["geometry"]["beam_count"] = ex_b["beam_count"]
+                    ex_b["geometry"]["sub_beams"] = sub_b
+                    break
+
+        if not already_covered:
+            matched_notes = [
+                str(n["id"]) for n in notes
+                if int(n["staff_index"]) == b1["staff_index"]
+                and (comb_x0 - 0.5 * sp) <= float(n["center"][0]) <= (comb_x1 + 0.5 * sp)
+            ]
+            beam_id = f"beam-{len(beams):04d}"
+            beams.append({
+                "id": beam_id,
+                "kind": "beam",
+                "staff_index": b1["staff_index"],
+                "stem_ids": [],
+                "note_ids": matched_notes,
+                "beam_count": beam_count,
+                "direction": "up" if y0_cen < staffs[b1["staff_index"]].top else "down",
+                "bbox": box,
+                "geometry": {
+                    "x0_px": round(float(comb_x0), 3),
+                    "y0_px": round(y0_cen, 3),
+                    "x1_px": round(float(comb_x1), 3),
+                    "y1_px": round(y1_cen, 3),
+                    "thickness_px_estimate": round(mean_thick, 3),
+                    "beam_count": beam_count,
+                    "sub_beams": sub_b,
+                },
+            })
+
+    # 3. Detect augmentation dots immediately to the right of noteheads
+    # Suppress false dots that collide with detected beams or stems
     for note in notes:
         staff_index = int(note["staff_index"])
         if staff_index >= len(staffs):
@@ -518,6 +635,19 @@ def detect_beams_and_dots(
             if min_dot <= area <= max_dot and 0.5 <= (bw / max(bh, 1)) <= 2.0 and max(bw, bh) <= max(4, int(round(0.45 * sp))):
                 dcx = x0 + float(centroids[comp][0])
                 dcy = y0 + float(centroids[comp][1])
+
+                # Discard if inside or adjacent to any beam bounding box
+                in_beam = False
+                for b in beams:
+                    if b["staff_index"] != staff_index:
+                        continue
+                    b_box = b.get("bbox") or [b["geometry"]["x0_px"], b["geometry"]["y0_px"] - 4, b["geometry"]["x1_px"] - b["geometry"]["x0_px"], 8]
+                    if (b_box[0] - 0.5 * sp) <= dcx <= (b_box[0] + b_box[2] + 0.5 * sp) and (b_box[1] - 0.5 * sp) <= dcy <= (b_box[1] + b_box[3] + 0.5 * sp):
+                        in_beam = True
+                        break
+                if in_beam:
+                    continue
+
                 dot_id = f"dot-{len(dots):04d}"
                 dots.append({
                     "id": dot_id,

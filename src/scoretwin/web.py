@@ -10,11 +10,11 @@ from pathlib import Path
 
 import cv2
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from .gltf_export import build_gltf, validate_embedded_gltf
 from .imaging import load_grayscale
-from .pipeline import process_file, render_geometry_scene
+from .pipeline import compile_digital_score_pdf, process_file, render_geometry_scene
 from .musicxml import build_musicxml
 
 app = FastAPI(title="ScoreTwin / IDSR", version="0.1.0")
@@ -59,7 +59,12 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
   <label style="cursor:pointer;display:inline-flex;align-items:center;gap:5px"><input id="show-fingers" type="checkbox" checked> <span style="color:#38bdf8">■</span> Ocluzii Degete</label>
 </div>
 <canvas id="pageCanvas" width="1100" height="400" aria-label="Draggable notehead proposals over the source page"></canvas></section>
-<section class="panel"><h2>Scene summary</h2><pre id="summary"></pre><div><a id="download" download="provisional.musicxml">Download provisional MusicXML</a></div><button id="export-scene" type="button">Download edited scene JSON</button><button id="reset-edits" type="button">Reset edits</button></section>
+<section class="panel"><h2>Scene summary</h2><pre id="summary"></pre>
+<div style="margin: 10px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+  <a id="download-digital-pdf" download="score_digital.pdf" style="background:#238636;color:#ffffff;text-decoration:none;padding:8px 14px;border-radius:6px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">📄 Download Digitalized Score (PDF)</a>
+  <a id="download" download="provisional.musicxml" style="background:#1f6feb;color:#ffffff;text-decoration:none;padding:8px 14px;border-radius:6px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">🎼 Download MusicXML</a>
+</div>
+<button id="export-scene" type="button">Download edited scene JSON</button><button id="reset-edits" type="button">Reset edits</button></section>
 </div>
 <section class="panel" id="satb-panel" hidden>
 <h2>Ansamblu Coral SATB & Strat Versuri (Română)</h2>
@@ -241,66 +246,178 @@ function projectPoint(x,y,z){
 }
 function draw3d(){
  ctx.clearRect(0,0,canvas.width,canvas.height);
- ctx.fillStyle='#0d1118';ctx.fillRect(0,0,canvas.width,canvas.height);
+ ctx.fillStyle='#0b0f17';ctx.fillRect(0,0,canvas.width,canvas.height);
  if(!currentScene)return;
  const width=currentScene.image.width,height=currentScene.image.height;
- const sep=Number(document.getElementById('lambda').value)*Math.max(16,currentScene.staffs.length*10);
+ const sep=Number(document.getElementById('lambda').value)*Math.max(20,currentScene.staffs.length*12);
  const cx0=width/2,cy0=height/2;
- const lines=[];
- currentScene.staffs.forEach((staff,si)=>{
-  staff.lines.forEach(y=>lines.push([[0-cx0,y-cy0,0],[width-cx0,y-cy0,0]]));
+
+ // 1. Render 3D Physical Paper Substrate in Perspective with Shadow
+ const p00=projectPoint(0,0,0);
+ const p10=projectPoint(width,0,0);
+ const p11=projectPoint(width,height,0);
+ const p01=projectPoint(0,height,0);
+
+ // Soft paper drop shadow
+ ctx.shadowColor='rgba(0,0,0,0.65)';
+ ctx.shadowBlur=22;
+ ctx.shadowOffsetX=6;
+ ctx.shadowOffsetY=10;
+
+ // Paper sheet surface (authentic ivory music score parchment)
+ ctx.fillStyle='#faf8f5';
+ ctx.beginPath();
+ ctx.moveTo(p00[0],p00[1]);
+ ctx.lineTo(p10[0],p10[1]);
+ ctx.lineTo(p11[0],p11[1]);
+ ctx.lineTo(p01[0],p01[1]);
+ ctx.closePath();
+ ctx.fill();
+
+ // Reset shadow
+ ctx.shadowColor='transparent';
+ ctx.shadowBlur=0;
+ ctx.shadowOffsetX=0;
+ ctx.shadowOffsetY=0;
+
+ // Paper trim border
+ ctx.strokeStyle='#cbd5e1';
+ ctx.lineWidth=1.5;
+ ctx.stroke();
+
+ // 2. Staff lines engraved upon the paper surface
+ ctx.lineWidth=1.0;
+ ctx.strokeStyle='#334155';
+ currentScene.staffs.forEach(staff=>{
+  staff.lines.forEach(y=>{
+   const a=projectPoint(15,y,1);
+   const b=projectPoint(width-15,y,1);
+   ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+  });
+  if(staff.barlines){
+   staff.barlines.forEach(bx=>{
+    const a=projectPoint(bx,staff.top,1);
+    const b=projectPoint(bx,staff.bottom,1);
+    ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+   });
+  }
  });
- ctx.lineWidth=1.2;ctx.strokeStyle='#4a9a77';
- lines.forEach(pair=>{
-  const a=projectPoint(pair[0][0]+cx0,pair[0][1]+cy0,pair[0][2]);
-  const b=projectPoint(pair[1][0]+cx0,pair[1][1]+cy0,pair[1][2]);
-  ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
- });
-(currentScene.primitives||[]).filter(primitive=>primitive.kind==='stem').forEach(stem=>{
-  const relation=(currentScene.relations||[]).find(item=>item.type==='stem_of'&&item.source===stem.id);
-  const note=relation&&currentScene.notes.find(item=>item.id===relation.target);
-  if(!note)return;
-  const z=sep*(0.65+(note.staff_index%3)*0.16);
+
+ // 3. Vertical Stems in 3D
+ const stemPrims=(currentScene.primitives||[]).filter(p=>p.kind==='stem');
+ stemPrims.forEach(stem=>{
   const g=stem.geometry||{};
-  const a=projectPoint(Number(g.x0_px),Number(g.y0_px),z);
-  const b=projectPoint(Number(g.x1_px),Number(g.y1_px),z);
-  ctx.strokeStyle='#c6ccd7';ctx.lineWidth=1.6;ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+  const a=projectPoint(Number(g.x0_px),Number(g.y0_px),sep*0.35);
+  const b=projectPoint(Number(g.x1_px),Number(g.y1_px),sep*0.35);
+  ctx.strokeStyle='#1e293b';ctx.lineWidth=2.0;ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
  });
- currentScene.notes.forEach((note,index)=>{
-  const x=Number(note.center[0])-cx0,y=Number(note.center[1])-cy0;
-  const z=sep*(0.65+(note.staff_index%3)*0.16);
-  const p=projectPoint(x+cx0,y+cy0,z);
-  const r=Math.max(3,Math.min(8,Number(note.bbox[2])*0.28));
-  ctx.fillStyle='#e56f79';ctx.beginPath();ctx.ellipse(p[0],p[1],r*1.2,r, yaw*0.15,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle='#edf0f6';ctx.font='11px system-ui';ctx.fillText(note.pitch.step+note.pitch.octave+'?',p[0]+r+2,p[1]-r);
+
+ // 4. Realistic 3D Beams: Single Beams vs Dual Parallel Ribbons (Sixteenth notes: 2 bare de șaisprezecimi)
+ const beamPrims=(currentScene.primitives||[]).filter(p=>p.kind==='beam');
+ beamPrims.forEach(beam=>{
+  const g=beam.geometry||{};
+  const z=sep*0.55;
+  const subBeams=g.sub_beams||[];
+  ctx.fillStyle='#0f172a';
+  ctx.strokeStyle='#0f172a';
+  if(subBeams.length>1){
+   // Explicit double/multi beams (sixteenth notes: 2 bare paralele)
+   subBeams.forEach(sb=>{
+    const sx0=sb[0],sy0=sb[1],sw=sb[2],sh=Math.max(2.5,sb[3]);
+    const a=projectPoint(sx0,sy0,z);
+    const b=projectPoint(sx0+sw,sy0,z);
+    const c=projectPoint(sx0+sw,sy0+sh,z);
+    const d=projectPoint(sx0,sy0+sh,z);
+    ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.lineTo(c[0],c[1]);ctx.lineTo(d[0],d[1]);ctx.closePath();ctx.fill();
+   });
+  }else if(g.beam_count===2){
+   // Synthesize two parallel ribbons
+   const x0=Number(g.x0_px),y0=Number(g.y0_px),x1=Number(g.x1_px),y1=Number(g.y1_px);
+   const thick=Math.max(2,Number(g.thickness_px_estimate||4)*0.45);
+   const sepBeam=thick*1.6;
+   const a1=projectPoint(x0,y0-sepBeam/2,z),b1=projectPoint(x1,y1-sepBeam/2,z);
+   ctx.lineWidth=thick*1.2;ctx.beginPath();ctx.moveTo(a1[0],a1[1]);ctx.lineTo(b1[0],b1[1]);ctx.stroke();
+   const a2=projectPoint(x0,y0+sepBeam/2,z),b2=projectPoint(x1,y1+sepBeam/2,z);
+   ctx.lineWidth=thick*1.2;ctx.beginPath();ctx.moveTo(a2[0],a2[1]);ctx.lineTo(b2[0],b2[1]);ctx.stroke();
+  }else{
+   // Single beam ribbon (eighth note)
+   const x0=Number(g.x0_px),y0=Number(g.y0_px),x1=Number(g.x1_px),y1=Number(g.y1_px);
+   const thick=Math.max(3,Number(g.thickness_px_estimate||4));
+   const a=projectPoint(x0,y0,z),b=projectPoint(x1,y1,z);
+   ctx.lineWidth=thick*1.2;ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+  }
  });
- (currentScene.primitives||[]).filter(p=>p.kind==='lyric_syllable'||p.kind==='lyric_hyphen').forEach(lyr=>{
-  const g=lyr.geometry||{};const bx=Number(g.center_x_px||(g.bbox_px&&g.bbox_px[0])||0)-cx0;const by=Number(g.center_y_px||(g.bbox_px&&g.bbox_px[1])||0)-cy0;
-  const p=projectPoint(bx+cx0,by+cy0,sep*0.70);
-  ctx.fillStyle='#61afef';ctx.fillRect(p[0]-2,p[1]-2,4,4);
+
+ // 5. Noteheads in 3D: Rotated Ellipses with Proper Ductus Angle
+ currentScene.notes.forEach(note=>{
+  const x=Number(note.center[0]),y=Number(note.center[1]);
+  const z=sep*0.35;
+  const p=projectPoint(x,y,z);
+  const rx=Math.max(4,Number(note.bbox[2])*0.32);
+  const ry=Math.max(3,Number(note.bbox[3])*0.26);
+  const rotRad=(Number(note.geometry_refinement?.rotation_deg||-20))*Math.PI/180;
+  ctx.save();
+  ctx.translate(p[0],p[1]);
+  ctx.rotate(rotRad+yaw*0.1);
+  ctx.fillStyle='#0f172a';
+  ctx.beginPath();
+  ctx.ellipse(0,0,rx*1.2,ry,0,0,Math.PI*2);
+  if(note.shape_class==='hollow_head'){
+   ctx.lineWidth=2.2;ctx.strokeStyle='#0f172a';ctx.stroke();
+  }else{
+   ctx.fill();
+  }
+  ctx.restore();
+  ctx.fillStyle='#475569';ctx.font='10px system-ui';
+  ctx.fillText(note.pitch.step+note.pitch.octave,p[0]+rx+2,p[1]-ry);
  });
- (currentScene.primitives||[]).filter(p=>(p.kind&&p.kind.startsWith('dynamic'))||(p.kind&&p.kind.startsWith('hairpin'))).forEach(dyn=>{
-  const g=dyn.geometry||{};const bx=Number((g.bbox_px&&g.bbox_px[0])||0)-cx0;const by=Number((g.bbox_px&&g.bbox_px[1])||0)-cy0;
-  const p=projectPoint(bx+cx0,by+cy0,sep*0.90);
-  ctx.fillStyle='#e5c07b';ctx.fillRect(p[0]-3,p[1]-3,6,6);
+
+ // 6. True Augmentation Dots
+ (currentScene.dots||[]).forEach(dot=>{
+  const p=projectPoint(Number(dot.center[0]),Number(dot.center[1]),sep*0.35);
+  ctx.fillStyle='#0f172a';ctx.beginPath();ctx.arc(p[0],p[1],2.5,0,Math.PI*2);ctx.fill();
  });
+
+ // 7. Lyrics Layer (Real syllable badges, not toy squares!)
+ const lyricsPrims=(currentScene.primitives||[]).filter(p=>p.kind==='lyric_syllable'||p.kind==='lyric_hyphen');
+ lyricsPrims.forEach(lyr=>{
+  const g=lyr.geometry||{};
+  const bx=Number(g.center_x_px||(g.bbox_px&&g.bbox_px[0])||0);
+  const by=Number(g.center_y_px||(g.bbox_px&&g.bbox_px[1])||0);
+  const p=projectPoint(bx,by,sep*0.75);
+  const text=lyr.kind==='lyric_hyphen'?'-':(lyr.text||'text');
+  ctx.fillStyle='rgba(16,185,129,0.18)';
+  ctx.strokeStyle='#10b981';
+  ctx.lineWidth=1;
+  const textW=ctx.measureText(text).width||16;
+  ctx.beginPath();
+  ctx.roundRect?ctx.roundRect(p[0]-textW/2-4,p[1]-8,textW+8,16,4):ctx.rect(p[0]-textW/2-4,p[1]-8,textW+8,16);
+  ctx.fill();ctx.stroke();
+  ctx.fillStyle='#059669';ctx.font='bold 10px system-ui';
+  ctx.fillText(text,p[0]-textW/2,p[1]+4);
+ });
+
+ // 8. Dynamics Layer (Musical badges)
+ const dynPrims=(currentScene.primitives||[]).filter(p=>(p.kind&&p.kind.startsWith('dynamic'))||(p.kind&&p.kind.startsWith('hairpin')));
+ dynPrims.forEach(dyn=>{
+  const g=dyn.geometry||{};
+  const bx=Number((g.bbox_px&&g.bbox_px[0])||0)+10;
+  const by=Number((g.bbox_px&&g.bbox_px[1])||0);
+  const p=projectPoint(bx,by,sep*0.95);
+  const glyph=dyn.kind.includes('mf')?'mf':(dyn.kind.includes('f')?'f':'p');
+  ctx.fillStyle='#f59e0b';ctx.font='italic bold 12px serif';
+  ctx.fillText(glyph,p[0]-6,p[1]+4);
+ });
+
+ // 9. Volta Brackets
  (currentScene.primitives||[]).filter(p=>p.kind==='volta_bracket').forEach(vlt=>{
   const g=vlt.geometry||{};const vx0=Number(g.vx0||(g.bbox_px&&g.bbox_px[0])||0);const vx1=Number(g.vx1||(vx0+60));const ry=Number(g.roof_y||(g.bbox_px&&g.bbox_px[1])||0);
-  const a=projectPoint(vx0,ry,sep*1.50);const b=projectPoint(vx1,ry,sep*1.50);
+  const a=projectPoint(vx0,ry,sep*1.30);const b=projectPoint(vx1,ry,sep*1.30);
   ctx.strokeStyle='#c678dd';ctx.lineWidth=2.0;ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
  });
- (currentScene.primitives||[]).filter(p=>p.kind&&(p.kind.includes('annotation')||p.kind.includes('redteam'))).forEach(ann=>{
-  const g=ann.geometry||{};const bx=Number((g.bbox_px&&g.bbox_px[0])||0)-cx0;const by=Number((g.bbox_px&&g.bbox_px[1])||0)-cy0;
-  const p=projectPoint(bx+cx0,by+cy0,sep*2.0);
-  ctx.fillStyle='#ff5555';ctx.fillRect(p[0]-4,p[1]-4,8,8);
- });
- currentScene.unknown_objects.forEach(item=>{
-  const x=Number(item.center[0])-cx0,y=Number(item.center[1])-cy0;
-  const p=projectPoint(x+cx0,y+cy0,sep*0.3);
-  ctx.fillStyle='#e3b35b';ctx.fillRect(p[0]-3,p[1]-3,6,6);
- });
- ctx.fillStyle='#9da8b9';ctx.font='12px system-ui';
- ctx.fillText('x/y: observed page coordinates · z: semantic visualization (Z0:Staff Z0.65:Notes Z0.70:Lyrics Z0.90:Dyn Z1.5:Volta Z2.0:Annotations)',16,24);
+
+ ctx.fillStyle='#94a3b8';ctx.font='12px system-ui';
+ ctx.fillText('ScoreTwin 3D: Substrat Hârtie · Portative · Note · Bare Paralele Șaisprezecimi · Versuri',16,24);
 }
 function buildEditor(){
  const holder=document.getElementById('editor');holder.replaceChildren();
@@ -381,11 +498,58 @@ form.addEventListener('submit',async(event)=>{
   ].join('\\n');
   document.getElementById('download-residual').disabled=!residualPngBase64;
   document.getElementById('download-identity-report').disabled=!identityReportJson;
-  setDownload(result.musicxml);document.getElementById('results').hidden=false;
+  setDownload(result.musicxml);
+  setPdfDownload(result.digital_pdf_base64);
+  document.getElementById('results').hidden=false;
   buildEditor();draw3d();renderSatbPanel(currentScene);
   status.textContent='Analysis finished. Review every pitch and all warnings before using the MusicXML.';
  }catch(error){status.textContent=error.message||String(error);}
  finally{button.disabled=false;}
+});
+let digitalPdfBase64 = null;
+function setPdfDownload(base64Data){
+ digitalPdfBase64 = base64Data;
+ const anchor = document.getElementById('download-digital-pdf');
+ if(!anchor) return;
+ if(base64Data){
+  const binaryString = atob(base64Data);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+   bytes[i] = binaryString.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], {type: 'application/pdf'});
+  const url = URL.createObjectURL(blob);
+  if(anchor.dataset.url) URL.revokeObjectURL(anchor.dataset.url);
+  anchor.href = url;
+  anchor.dataset.url = url;
+ }
+}
+document.getElementById('download-digital-pdf').addEventListener('click', async (event) => {
+ if(!digitalPdfBase64 && currentScene){
+  event.preventDefault();
+  const btn = document.getElementById('download-digital-pdf');
+  const oldText = btn.textContent;
+  btn.textContent = '⏳ Compiling vectorized PDF...';
+  try {
+   const response = await fetch('/api/export-pdf', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(currentScene)
+   });
+   if(!response.ok) throw new Error('PDF export failed');
+   const blob = await response.blob();
+   const url = URL.createObjectURL(blob);
+   const a = document.createElement('a');
+   a.href = url;
+   a.download = 'score_digital.pdf';
+   a.click();
+   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch(err) {
+   alert('PDF generation error: ' + err.message);
+  } finally {
+   btn.textContent = oldText;
+  }
+ }
 });
 function setDownload(xml){
  const url=URL.createObjectURL(new Blob([xml],{type:'application/vnd.recordare.musicxml+xml'}));
@@ -583,6 +747,10 @@ async def analyze(
                 base64.b64encode(residual_bytes).decode("ascii")
                 if residual_download_available else None
             )
+            digital_pdf_path = analysis_result.get("digital_pdf_path")
+            digital_pdf_base64 = None
+            if digital_pdf_path and Path(digital_pdf_path).exists():
+                digital_pdf_base64 = base64.b64encode(Path(digital_pdf_path).read_bytes()).decode("ascii")
             return {
                 "summary": {
                     "filename": filename,
@@ -605,6 +773,7 @@ async def analyze(
                 "source": scene["source"],
                 "scene": scene,
                 "musicxml": xml,
+                "digital_pdf_base64": digital_pdf_base64,
                 "identity_reconstruction": scene.get("identity_reconstruction", {}),
                 "identity_report_json": identity_report_json,
                 "residual_png_base64": residual_png_base64,
@@ -622,6 +791,23 @@ async def analyze(
             }
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/export-pdf")
+def export_pdf(scene: dict = Body(...)) -> Response:
+    """Compile digitalized vectorized PDF directly from the current scene."""
+    if scene.get("schema") != "scoretwin-scene-0.1":
+        raise HTTPException(status_code=400, detail="Unrecognized ScoreTwin scene schema.")
+    with tempfile.TemporaryDirectory() as td:
+        pdf_out = Path(td) / "score_digital.pdf"
+        res = compile_digital_score_pdf(scene, pdf_out)
+        if not res or not pdf_out.exists():
+            raise HTTPException(status_code=500, detail="Could not compile digital PDF.")
+        return Response(
+            content=pdf_out.read_bytes(),
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=score_digital.pdf"},
+        )
 
 
 def _render_base64(shape: tuple[int, int], scene: dict, scale: float = 1.0) -> str:

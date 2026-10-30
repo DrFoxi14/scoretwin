@@ -892,7 +892,8 @@ def detect_stem_candidates(
 
     These are only stem/barline hypotheses. Association to noteheads and exclusion
     of barlines happen in the pipeline; flags, beams and stem direction are not
-    inferred by this function.
+    inferred by this function. Supports both clean vertical engraving and natural slant
+    up to ~8 degrees.
     """
     if binary.ndim != 2:
         raise ValueError("Expected a 2D binary image.")
@@ -901,23 +902,31 @@ def detect_stem_candidates(
     for staff in staffs:
         staff_index = int(staff.index)
         spacing = float(staff.spacing)
-        kernel_height = max(7, int(round(2.25 * spacing)))
-        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, kernel_height))
-        vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vertical_kernel)
-        top_limit = max(0, int(round(staff.top - 3.0 * spacing)))
-        bottom_limit = min(binary.shape[0], int(round(staff.bottom + 3.0 * spacing)) + 1)
-        count, _labels, stats, centroids = cv2.connectedComponentsWithStats(
-            vertical[top_limit:bottom_limit, :], 8
-        )
+        top_limit = max(0, int(round(staff.top - 3.2 * spacing)))
+        bottom_limit = min(binary.shape[0], int(round(staff.bottom + 3.2 * spacing)) + 1)
+        roi = binary[top_limit:bottom_limit, :]
         bar_xs = [float(x) for x in barlines_by_staff.get(staff_index, [])]
+
+        # 1. Pure vertical morphology (captures straight stems and strips noteheads)
+        kh = max(7, int(round(2.0 * spacing)))
+        vk = cv2.getStructuringElement(cv2.MORPH_RECT, (1, kh))
+        v = cv2.morphologyEx(roi, cv2.MORPH_OPEN, vk)
+
+        # 2. Slanted stem morphology (tolerates up to ~8 deg tilt by using 2x(1.5*sp))
+        kh_slant = max(6, int(round(1.5 * spacing)))
+        vk_slant = cv2.getStructuringElement(cv2.MORPH_RECT, (2, kh_slant))
+        v_slant = cv2.morphologyEx(roi, cv2.MORPH_OPEN, vk_slant)
+
+        combined_v = cv2.bitwise_or(v, v_slant)
+        count, _labels, stats, centroids = cv2.connectedComponentsWithStats(combined_v, 8)
         for component in range(1, count):
             x, y_local, w, h, area = [int(value) for value in stats[component]]
             cy = float(centroids[component][1]) + top_limit
             cx = float(centroids[component][0])
             y = y_local + top_limit
-            if h < 2.0 * spacing or w > max(3, int(round(0.42 * spacing))):
+            if h < 1.7 * spacing or w > max(4, int(round(0.55 * spacing))):
                 continue
-            if area < h * 0.45:
+            if area < h * 0.40 or (h / max(1, w)) < 1.5:
                 continue
             if any(abs(cx - bar_x) <= 0.30 * spacing for bar_x in bar_xs):
                 continue
@@ -932,9 +941,10 @@ def detect_stem_candidates(
     all_candidates.sort(key=lambda item: (item["staff_index"], item["center"][0], item["bbox"][1]))
     kept: list[dict] = []
     for candidate in all_candidates:
+        cand_spacing = float(staffs[candidate["staff_index"]].spacing)
         duplicate = any(
             candidate["staff_index"] == other["staff_index"]
-            and abs(candidate["center"][0] - other["center"][0]) <= 1.0
+            and abs(candidate["center"][0] - other["center"][0]) <= max(2.0, 0.25 * cand_spacing)
             and abs(candidate["center"][1] - other["center"][1]) <= 0.5 * candidate["length_px"]
             for other in kept
         )
