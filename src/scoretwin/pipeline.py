@@ -999,6 +999,55 @@ def compile_digital_score_pdf(scene: dict, output_pdf_path: str | Path) -> Path 
     return None
 
 
+def compile_digital_score_audio(
+    scene: dict,
+    output_midi_path: str | Path,
+    output_mp3_path: str | Path | None = None,
+) -> tuple[Path | None, Path | None]:
+    """Compile playable MIDI and MP3 audio from the scene via MuseScore CLI."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    midi_path = Path(output_midi_path)
+    midi_path.parent.mkdir(parents=True, exist_ok=True)
+    mp3_path = Path(output_mp3_path) if output_mp3_path else None
+    if mp3_path:
+        mp3_path.parent.mkdir(parents=True, exist_ok=True)
+
+    xml_content = build_musicxml(scene, musescore_compat=True)
+    mscore_candidates = [
+        "/Applications/MuseScore 4.app/Contents/MacOS/mscore",
+        shutil.which("mscore"),
+        shutil.which("mscore4"),
+        shutil.which("musescore"),
+    ]
+    mscore_bin = next((c for c in mscore_candidates if c and Path(c).is_file()), None)
+    if not mscore_bin:
+        return None, None
+
+    res_midi = None
+    res_mp3 = None
+    with tempfile.TemporaryDirectory() as td:
+        in_xml = Path(td) / "score_provisional.musicxml"
+        in_xml.write_text(xml_content, encoding="utf-8")
+        try:
+            r1 = subprocess.run([str(mscore_bin), str(in_xml), "-o", str(midi_path)], capture_output=True, timeout=45)
+            if r1.returncode == 0 and midi_path.exists() and midi_path.stat().st_size > 0:
+                res_midi = midi_path
+        except Exception:
+            pass
+        if mp3_path:
+            try:
+                r2 = subprocess.run([str(mscore_bin), str(in_xml), "-o", str(mp3_path)], capture_output=True, timeout=45)
+                if r2.returncode == 0 and mp3_path.exists() and mp3_path.stat().st_size > 0:
+                    res_mp3 = mp3_path
+            except Exception:
+                pass
+
+    return res_midi, res_mp3
+
+
 def render_overlay(gray: np.ndarray, scene: dict) -> np.ndarray:
     overlay = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     for staff in scene.get("staffs", []):
@@ -1091,6 +1140,7 @@ def process_file(
         adaptive_staffs=True,
         enable_extended_notation=True,
         enable_beer_lambert=True,
+        promote_inferred_durations=True,
         detect_fingers=True,
         color_image=analysis_pixels if analysis_pixels.ndim == 3 else None,
     )
@@ -1272,6 +1322,7 @@ def process_file(
     musicxml = build_musicxml(scene, musescore_compat=True)
     (output / "provisional.musicxml").write_text(musicxml, encoding="utf-8")
     digital_pdf_path = compile_digital_score_pdf(scene, output / "score_digital.pdf")
+    midi_path, mp3_path = compile_digital_score_audio(scene, output / "score_audio.mid", output / "score_audio.mp3")
 
     # Verify the immutable source copy before reporting completion.
     copied_hash = hashlib.sha256((output / preserved_name).read_bytes()).hexdigest()
@@ -1282,6 +1333,8 @@ def process_file(
         "scene": scene,
         "musicxml_path": str(output / "provisional.musicxml"),
         "digital_pdf_path": str(digital_pdf_path) if digital_pdf_path else None,
+        "midi_path": str(midi_path) if midi_path else None,
+        "mp3_path": str(mp3_path) if mp3_path else None,
         "overlay_path": str(output / "overlay.png"),
         "geometry_render_path": str(output / "geometry-render.png"),
         "residual_path": str(residual_path),

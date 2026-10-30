@@ -674,16 +674,20 @@ def infer_chords_voices_and_durations(
     barlines_by_staff = barlines_by_staff or {}
     stems_by_id = {str(s["id"]): s for s in stems}
     beam_count_by_stem: dict[str, int] = defaultdict(int)
+    beam_count_by_note: dict[str, int] = defaultdict(int)
     for beam in beams:
+        b_count = int(beam.get("beam_count", 1))
         for sid in beam.get("stem_ids", []):
-            beam_count_by_stem[str(sid)] = max(beam_count_by_stem[str(sid)], int(beam.get("beam_count", 1)))
+            beam_count_by_stem[str(sid)] = max(beam_count_by_stem[str(sid)], b_count)
+        for nid in beam.get("note_ids", []):
+            beam_count_by_note[str(nid)] = max(beam_count_by_note[str(nid)], b_count)
 
     # Determine stem direction for each note
     for note in notes:
         sids = note.get("stem_ids", [])
         cy = float(note["center"][1])
         stem_dir = None
-        max_beams = 0
+        max_beams = beam_count_by_note.get(str(note["id"]), 0)
         for sid in sids:
             stem = stems_by_id.get(str(sid))
             if stem is None:
@@ -705,19 +709,18 @@ def infer_chords_voices_and_durations(
                 base_type = "whole"
                 cand = "whole_note_candidate"
                 basis = "hollow_notehead_without_detected_stem"
+        elif max_beams >= 2:
+            base_type = "16th"
+            cand = "dotted_sixteenth_note_candidate" if dots_n else "sixteenth_note_candidate"
+            basis = "filled_notehead_with_double_beam"
+        elif max_beams == 1:
+            base_type = "eighth"
+            cand = "dotted_eighth_note_candidate" if dots_n else "eighth_note_candidate"
+            basis = "filled_notehead_with_single_beam"
         elif sids:
-            if max_beams >= 2:
-                base_type = "16th"
-                cand = "sixteenth_note_candidate"
-                basis = "filled_notehead_with_stem_and_double_beam"
-            elif max_beams == 1:
-                base_type = "eighth"
-                cand = "eighth_note_candidate"
-                basis = "filled_notehead_with_stem_and_single_beam"
-            else:
-                base_type = "quarter"
-                cand = "dotted_quarter_note_candidate" if dots_n else "quarter_or_shorter_candidate"
-                basis = "filled_notehead_with_stem; beam_and_flag_count_unknown"
+            base_type = "quarter"
+            cand = "dotted_quarter_note_candidate" if dots_n else "quarter_or_shorter_candidate"
+            basis = "filled_notehead_with_stem; beam_and_flag_count_unknown"
         else:
             base_type = "quarter"
             cand = "unresolved"

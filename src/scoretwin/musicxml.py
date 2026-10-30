@@ -57,9 +57,9 @@ def _pitch_rank(note: dict) -> tuple[int, float]:
     return octave * 7 + _STEP_INDEX[step], alter
 
 
-def _add_attributes(measure: ET.Element, staffs: list[dict], staff_numbers: dict[int, int]) -> None:
+def _add_attributes(measure: ET.Element, staffs: list[dict], staff_numbers: dict[int, int], divisions: int = 4) -> None:
     attributes = _sub(measure, "attributes")
-    _sub(attributes, "divisions", 1)
+    _sub(attributes, "divisions", divisions)
 
     first_staff = staffs[0] if staffs else {}
     fifths = _as_int(first_staff.get("key_fifths", 0), "Key signature fifths")

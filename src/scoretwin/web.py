@@ -14,7 +14,12 @@ from fastapi.responses import HTMLResponse, Response
 
 from .gltf_export import build_gltf, validate_embedded_gltf
 from .imaging import load_grayscale
-from .pipeline import compile_digital_score_pdf, process_file, render_geometry_scene
+from .pipeline import (
+    compile_digital_score_audio,
+    compile_digital_score_pdf,
+    process_file,
+    render_geometry_scene,
+)
 from .musicxml import build_musicxml
 
 app = FastAPI(title="ScoreTwin / IDSR", version="0.1.0")
@@ -59,10 +64,18 @@ canvas{width:100%;height:380px;background:#0d1118;border-radius:10px;border:1px 
   <label style="cursor:pointer;display:inline-flex;align-items:center;gap:5px"><input id="show-fingers" type="checkbox" checked> <span style="color:#38bdf8">■</span> Ocluzii Degete</label>
 </div>
 <canvas id="pageCanvas" width="1100" height="400" aria-label="Draggable notehead proposals over the source page"></canvas></section>
-<section class="panel"><h2>Scene summary</h2><pre id="summary"></pre>
-<div style="margin: 10px 0; display: flex; gap: 8px; flex-wrap: wrap;">
-  <a id="download-digital-pdf" download="score_digital.pdf" style="background:#238636;color:#ffffff;text-decoration:none;padding:8px 14px;border-radius:6px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">📄 Download Digitalized Score (PDF)</a>
-  <a id="download" download="provisional.musicxml" style="background:#1f6feb;color:#ffffff;text-decoration:none;padding:8px 14px;border-radius:6px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">🎼 Download MusicXML</a>
+<section class="panel"><h2>Scene summary & Playback</h2><pre id="summary"></pre>
+<div style="margin: 12px 0; background: #161b22; border: 1px solid #303949; border-radius: 8px; padding: 12px;">
+  <div style="font-weight: 600; margin-bottom: 8px; color: #58a6ff; display: flex; align-items: center; gap: 8px;">
+    <span>🎧 Ascultă redarea digitalizată (MuseScore 4 Engine):</span>
+  </div>
+  <audio id="score-audio-player" controls style="width: 100%; height: 36px; margin-bottom: 10px;" hidden></audio>
+  <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+    <a id="download-digital-pdf" download="score_digital.pdf" style="background:#238636;color:#ffffff;text-decoration:none;padding:8px 14px;border-radius:6px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">📄 Download Digitalized Score (PDF)</a>
+    <a id="download-audio-mp3" download="score_audio.mp3" style="background:#8957e5;color:#ffffff;text-decoration:none;padding:8px 14px;border-radius:6px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">🎧 Download Audio (MP3)</a>
+    <a id="download-midi" download="score_audio.mid" style="background:#da3633;color:#ffffff;text-decoration:none;padding:8px 14px;border-radius:6px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">🎵 Download MIDI</a>
+    <a id="download" download="provisional.musicxml" style="background:#1f6feb;color:#ffffff;text-decoration:none;padding:8px 14px;border-radius:6px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">🎼 Download MusicXML</a>
+  </div>
 </div>
 <button id="export-scene" type="button">Download edited scene JSON</button><button id="reset-edits" type="button">Reset edits</button></section>
 </div>
@@ -500,6 +513,7 @@ form.addEventListener('submit',async(event)=>{
   document.getElementById('download-identity-report').disabled=!identityReportJson;
   setDownload(result.musicxml);
   setPdfDownload(result.digital_pdf_base64);
+  setAudioDownloads(result.audio_mp3_base64, result.midi_base64);
   document.getElementById('results').hidden=false;
   buildEditor();draw3d();renderSatbPanel(currentScene);
   status.textContent='Analysis finished. Review every pitch and all warnings before using the MusicXML.';
@@ -555,6 +569,25 @@ function setDownload(xml){
  const url=URL.createObjectURL(new Blob([xml],{type:'application/vnd.recordare.musicxml+xml'}));
  const anchor=document.getElementById('download');if(anchor.dataset.url)URL.revokeObjectURL(anchor.dataset.url);
  anchor.href=url;anchor.dataset.url=url;
+}
+function setAudioDownloads(mp3Base64, midiBase64){
+ const player = document.getElementById('score-audio-player');
+ const mp3Anchor = document.getElementById('download-audio-mp3');
+ const midiAnchor = document.getElementById('download-midi');
+ if(mp3Base64){
+  const mp3Url = 'data:audio/mp3;base64,' + mp3Base64;
+  player.src = mp3Url;
+  player.hidden = false;
+  if(mp3Anchor){
+   mp3Anchor.href = mp3Url;
+   mp3Anchor.hidden = false;
+  }
+ }
+ if(midiBase64 && midiAnchor){
+  const midiUrl = 'data:audio/midi;base64,' + midiBase64;
+  midiAnchor.href = midiUrl;
+  midiAnchor.hidden = false;
+ }
 }
 function renderSatbPanel(scene){
  const panel = document.getElementById('satb-panel');
@@ -751,6 +784,14 @@ async def analyze(
             digital_pdf_base64 = None
             if digital_pdf_path and Path(digital_pdf_path).exists():
                 digital_pdf_base64 = base64.b64encode(Path(digital_pdf_path).read_bytes()).decode("ascii")
+            midi_path = analysis_result.get("midi_path")
+            midi_base64 = None
+            if midi_path and Path(midi_path).exists():
+                midi_base64 = base64.b64encode(Path(midi_path).read_bytes()).decode("ascii")
+            mp3_path = analysis_result.get("mp3_path")
+            audio_mp3_base64 = None
+            if mp3_path and Path(mp3_path).exists():
+                audio_mp3_base64 = base64.b64encode(Path(mp3_path).read_bytes()).decode("ascii")
             return {
                 "summary": {
                     "filename": filename,
@@ -774,6 +815,8 @@ async def analyze(
                 "scene": scene,
                 "musicxml": xml,
                 "digital_pdf_base64": digital_pdf_base64,
+                "audio_mp3_base64": audio_mp3_base64,
+                "midi_base64": midi_base64,
                 "identity_reconstruction": scene.get("identity_reconstruction", {}),
                 "identity_report_json": identity_report_json,
                 "residual_png_base64": residual_png_base64,
@@ -808,6 +851,21 @@ def export_pdf(scene: dict = Body(...)) -> Response:
             media_type="application/pdf",
             headers={"Content-Disposition": "attachment; filename=score_digital.pdf"},
         )
+
+
+@app.post("/api/export-audio")
+def export_audio(scene: dict = Body(...)) -> dict:
+    """Compile digitalized audio (MP3 and MIDI) directly from the current scene."""
+    if scene.get("schema") != "scoretwin-scene-0.1":
+        raise HTTPException(status_code=400, detail="Unrecognized ScoreTwin scene schema.")
+    with tempfile.TemporaryDirectory() as td:
+        midi_out = Path(td) / "score_audio.mid"
+        mp3_out = Path(td) / "score_audio.mp3"
+        midi_res, mp3_res = compile_digital_score_audio(scene, midi_out, mp3_out)
+        return {
+            "midi_base64": base64.b64encode(midi_out.read_bytes()).decode("ascii") if midi_res and midi_out.exists() else None,
+            "audio_mp3_base64": base64.b64encode(mp3_out.read_bytes()).decode("ascii") if mp3_res and mp3_out.exists() else None,
+        }
 
 
 def _render_base64(shape: tuple[int, int], scene: dict, scale: float = 1.0) -> str:
