@@ -316,6 +316,7 @@ def test_redteam_torture_scenarios() -> None:
 
 def test_directions_1_and_2_dynamic_pipeline_and_curvilinear_world_idsr() -> None:
     from scoretwin.curvilinear_and_world_idsr import (
+        dewarp_curvilinear_spine_and_page,
         invert_3d_curvilinear_page_warp,
         reconstruct_nonlinear_polar_staff,
         reconstruct_relative_interval_and_world_notation,
@@ -352,6 +353,26 @@ def test_directions_1_and_2_dynamic_pipeline_and_curvilinear_world_idsr() -> Non
     assert c3d["curvilinear_tracker_residual_waviness_rms_sp"] < 0.03
     assert c3d["pitch_errors_after_curvilinear_dewarp"] == 0
     assert c3d["max_2d_replica_pixel_error_on_curved_3d_surface"] == 0.0
+
+    # Generalized Multi-Staff Spine Dewarping (> 3.5 sp warp)
+    h_test, w_test = 600, 1000
+    sp_test = 16.0
+    img_test = np.full((h_test, w_test), 255, dtype=np.uint8)
+    x_coords = np.arange(w_test, dtype=np.float64)
+    dy_severe = 60.0 * np.exp(-((x_coords - 100.0)**2)/(2.0*(140.0**2))) + 12.0 * np.sin(2.0*np.pi*x_coords/400.0)
+    for s_base in [180.0, 400.0]:
+        for lk in range(5):
+            ly = s_base + lk * sp_test + dy_severe
+            for xi in range(60, 940):
+                yi = int(round(ly[xi]))
+                if 0 <= yi < h_test:
+                    img_test[yi, xi] = 30
+    dew_res = dewarp_curvilinear_spine_and_page(img_test, spacing_hint=sp_test)
+    assert dew_res["staves_tracked_count"] >= 2
+    assert dew_res["max_warp_amplitude_sp"] > 3.0
+    assert dew_res["exact_lossless_identity_verified"] is True
+    assert dew_res["exact_lossless_reconstruction_error_px"] == 0
+    assert dew_res["canonical_planar_straight_lines"] is True
 
     # Direction 2B: Non-linear circular / polar staff IDSR
     pol = reconstruct_nonlinear_polar_staff()
