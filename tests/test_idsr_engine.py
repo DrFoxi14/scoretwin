@@ -620,6 +620,76 @@ def test_iron_gall_ink_corrosion_perforation_and_micro_lacuna() -> None:
     assert np.array_equal(recon, score_gray), "Lossless 2D recomposition must be bit-exact"
 
 
+def test_background_desk_and_finger_disentangler() -> None:
+    from scoretwin.background_and_finger_disentangler import (
+        detect_page_substrate_quadrilateral,
+        detect_finger_and_thumb_occlusions,
+        disentangle_background_and_fingers,
+    )
+    from scoretwin.pipeline import analyze_array, render_geometry_scene
+
+    h_raw, w_raw = 600, 800
+    # 1. Dark wood desk background (BGR: dark brown/gray)
+    desk_photo = np.full((h_raw, w_raw, 3), (35, 55, 75), dtype=np.uint8)
+
+    # 2. Paper sheet quadrilateral (photographed at slight angle on desk)
+    paper_quad = np.array([[120, 60], [700, 50], [680, 540], [100, 550]], dtype=np.int32)
+    cv2.fillPoly(desk_photo, [paper_quad], (240, 245, 250))
+
+    # 3. Draw 5-line staff on paper
+    for ly in [180, 196, 212, 228, 244]:
+        cv2.line(desk_photo, (160, ly), (640, ly), (40, 40, 40), 1)
+
+    # Draw quarter note at (360, 212)
+    cv2.ellipse(desk_photo, (360, 212), (9, 6), -20, 0, 360, (30, 30, 30), -1)
+    cv2.line(desk_photo, (368, 212), (368, 160), (30, 30, 30), 2)
+
+    # 4. Student's thumb holding bottom-left edge of paper (skin tone in BGR)
+    thumb_skin_bgr = (130, 160, 215)
+    cv2.ellipse(desk_photo, (110, 510), (35, 60), 30, 0, 360, thumb_skin_bgr, -1)
+
+    # Test Direction A: Automatic Paper Substrate Boundary Segmentation
+    sub_res = detect_page_substrate_quadrilateral(desk_photo)
+    assert sub_res["detected"] is True
+    assert sub_res["already_cropped_to_page"] is False
+    corners = np.array(sub_res["corners_ordered_xy"])
+    assert abs(corners[0, 0] - 120) < 15 and abs(corners[0, 1] - 60) < 15
+    assert abs(corners[1, 0] - 700) < 15 and abs(corners[1, 1] - 50) < 15
+    assert abs(corners[2, 0] - 680) < 15 and abs(corners[2, 1] - 540) < 15
+    assert abs(corners[3, 0] - 100) < 28 and abs(corners[3, 1] - 550) < 15
+    assert sub_res["lossless_2d_homography_reversible"] is True
+
+    # Test Direction B: Finger and Thumb Occlusion Detection
+    dis_res = disentangle_background_and_fingers(desk_photo, spacing_hint=16.0)
+    fingers = dis_res["finger_occlusions"]
+    assert fingers["has_finger_occlusions"] is True
+    assert fingers["fingers_detected_count"] >= 1
+    f0 = fingers["detected_fingers"][0]
+    assert "left" in f0["entry_border"] or "bottom" in f0["entry_border"]
+    assert f0["skin_chrominance_confirmed"] is True
+
+    # Test Direction C: Zero-Hallucination Music Analysis under Finger Occlusion
+    rect_gray = cv2.cvtColor(dis_res["rectified_image"], cv2.COLOR_BGR2GRAY)
+    scene = analyze_array(
+        rect_gray,
+        adaptive_staffs=True,
+        enable_extended_notation=True,
+        detect_fingers=True,
+        color_image=dis_res["rectified_image"],
+    )
+    # The finger holding the margin must NOT be hallucinated as a notehead
+    assert len(scene["notes"]) == 1, f"Expected exactly 1 note (thumb must not be a note), got {len(scene['notes'])}"
+    assert abs(scene["notes"][0]["center"][1] - 160.0) < 4.0
+    assert scene["finger_occlusions"]["has_finger_occlusions"] is True
+
+    # Bit-exact lossless recomposition of rectified sheet
+    gz = render_geometry_scene(rect_gray.shape, scene)
+    res = rect_gray.astype(np.int16) - gz.astype(np.int16)
+    res_u16 = (res + 255).astype(np.uint16)
+    recon = np.clip(gz.astype(np.int32) + res_u16.astype(np.int32) - 255, 0, 255).astype(np.uint8)
+    assert np.array_equal(recon, rect_gray), "Lossless 2D recomposition must be bit-exact"
+
+
 
 
 

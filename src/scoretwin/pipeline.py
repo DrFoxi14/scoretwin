@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from . import __version__
+from .background_and_finger_disentangler import detect_finger_and_thumb_occlusions, detect_page_substrate_quadrilateral, disentangle_background_and_fingers
 from .curvilinear_and_world_idsr import extract_dynamic_staff_anchored_idsr
 from .imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch
 from .gltf_export import build_gltf, validate_embedded_gltf
@@ -74,6 +75,8 @@ def analyze_array(
     enable_extended_notation: bool = True,
     enable_beer_lambert: bool = True,
     promote_inferred_durations: bool = False,
+    detect_fingers: bool = False,
+    color_image: np.ndarray | None = None,
 ) -> dict:
     if gray.ndim != 2 or gray.dtype != np.uint8:
         raise ValueError("analyze_array expects a uint8 grayscale image.")
@@ -85,6 +88,24 @@ def analyze_array(
         staffs, binary, staff_mask = detect_staff_systems_adaptive(gray)
     else:
         staffs, binary, staff_mask = detect_staff_systems(gray)
+
+    finger_info = None
+    if detect_fingers or color_image is not None:
+        img_for_fingers = color_image if color_image is not None else gray
+        avg_sp_init = float(np.median([s.spacing for s in staffs])) if staffs else 16.0
+        raw_finger = detect_finger_and_thumb_occlusions(img_for_fingers, spacing=avg_sp_init, staff_systems=staffs)
+        f_mask = raw_finger.get("finger_occlusion_mask")
+        if raw_finger["has_finger_occlusions"] and f_mask is not None:
+            # Suppress finger mask from binary ink so holding fingers never produce false notes or barlines
+            binary = (binary.astype(bool) & (~f_mask.astype(bool))).astype(np.uint8) * 255
+        # JSON-serializable dictionary for scene bundle
+        finger_info = {
+            "has_finger_occlusions": raw_finger["has_finger_occlusions"],
+            "fingers_detected_count": raw_finger["fingers_detected_count"],
+            "detected_fingers": raw_finger["detected_fingers"],
+            "finger_mask_pixels_count": int(np.count_nonzero(f_mask)) if f_mask is not None else 0,
+        }
+
     candidates = extract_notehead_candidates(gray, binary, staff_mask, staffs)
     model_training_metrics: dict = {}
     if candidates:
@@ -538,6 +559,8 @@ def analyze_array(
             unknown_objects,
             dpi=300.0,
         )
+        if finger_info is not None:
+            idsr_dynamic_layer["finger_occlusions"] = finger_info
         for l_idx, lyr in enumerate(idsr_dynamic_layer["dynamic_lyrics_detected"]):
             primitives.append({
                 "id": f"dynamic-lyric-{l_idx:04d}",
@@ -651,6 +674,10 @@ def analyze_array(
         "The synthetic model's confidence is not calibrated confidence on real manuscripts or photographs.",
         "Geometry-fit scores are local template-correlation and Beer-Lambert values; rejected fits leave the original proposal unchanged.",
     ])
+    if finger_info and finger_info.get("has_finger_occlusions"):
+        warnings.append(
+            f"Performer fingers/thumbs detected ({finger_info['fingers_detected_count']} holding borders); zero-hallucination mask applied."
+        )
     scene_dict = {
         "schema": "scoretwin-scene-0.1",
         "image": {"width": int(gray.shape[1]), "height": int(gray.shape[0])},
@@ -670,6 +697,7 @@ def analyze_array(
         "chord_count": structure_info.get("chord_count", 0),
         "unknown_objects": unknown_objects,
         "idsr_dynamic_layer": idsr_dynamic_layer,
+        "finger_occlusions": finger_info,
         "manifold_voice_traversal": manifold_voice_traversal,
         "proposal_count": len(classified),
         "note_count": len(notes),
@@ -922,6 +950,8 @@ def process_file(
         adaptive_staffs=True,
         enable_extended_notation=True,
         enable_beer_lambert=True,
+        detect_fingers=True,
+        color_image=analysis_pixels if analysis_pixels.ndim == 3 else None,
     )
     residual_skew = scene["capture_diagnostics"]["estimated_staffline_angle_deg"]
     source_skew = (
