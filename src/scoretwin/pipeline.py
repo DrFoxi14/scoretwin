@@ -29,14 +29,19 @@ def _classify_candidates(candidates: list[dict], model: dict) -> list[dict]:
         scores = predict_patch(model, crop)
         label = max(scores, key=scores.get)
         confidence = float(scores[label])
-        if confidence < 0.48:
+        if (candidate.get("corrosion_perforation") or {}).get("is_acid_cellulose_perforation"):
+            label = "corroded_filled_head"
+            confidence = 0.985
+        elif confidence < 0.48:
             label = "unknown"
 
         contrast_std = float(np.std(crop)) if crop.size else 0.0
         laplacian_variance = (
             float(cv2.Laplacian(crop, cv2.CV_64F).var()) if crop.size else 0.0
         )
-        if contrast_std < 12.0:
+        if (candidate.get("corrosion_perforation") or {}).get("is_acid_cellulose_perforation"):
+            unknown_reason = None
+        elif contrast_std < 12.0:
             unknown_reason = "low_local_contrast"
         elif laplacian_variance < 4.0:
             unknown_reason = "low_local_sharpness_or_blur"
@@ -104,16 +109,17 @@ def analyze_array(
         tau_clean = photometric_info["tau"].copy()
         tau_clean[staff_mask > 0] *= 0.25
     for item in classified:
-        if item["class"] not in ("filled_head", "hollow_head"):
+        if item["class"] not in ("filled_head", "hollow_head", "corroded_filled_head"):
             continue
         staff = staffs[int(item["staff_index"])]
         initial_center = [float(item["center"][0]), float(item["center"][1])]
+        geom_kind = "filled_head" if item["class"] == "corroded_filled_head" else item["class"]
         fit = refine_notehead_geometry(
-            gray, binary, staff_mask, initial_center, float(staff.spacing), item["class"],
+            gray, binary, staff_mask, initial_center, float(staff.spacing), geom_kind,
             precleaned_binary=clean_binary,
         )
         item["geometry_refinement"] = fit
-        if fit["accepted"]:
+        if fit["accepted"] and not (item.get("corrosion_perforation") or {}).get("is_acid_cellulose_perforation"):
             center_x, center_y = fit["center"]
             box_width, box_height = [int(v) for v in item["bbox"][2:4]]
             box_x = max(0, min(image_width - box_width, int(round(center_x - box_width / 2.0))))
@@ -125,7 +131,7 @@ def analyze_array(
                 tau_clean,
                 item["center"],
                 float(staff.spacing),
-                kind=item["class"],
+                kind="filled_head" if item["class"] == "corroded_filled_head" else item["class"],
             )
             item["beer_lambert_refinement"] = bl_fit
 
@@ -145,21 +151,25 @@ def analyze_array(
         staff_index = item["staff_index"]
         staff = staffs[staff_index]
         cx, cy = item["center"]
-        if item["class"] in ("filled_head", "hollow_head"):
+        if item["class"] in ("filled_head", "hollow_head", "corroded_filled_head"):
             step, letter, octave = staff_step_and_pitch(cy, staff)
+            is_corroded = (item["class"] == "corroded_filled_head") or bool(
+                (item.get("corrosion_perforation") or {}).get("is_acid_cellulose_perforation")
+            )
             notes.append({
                 "id": item["id"],
                 "staff_index": staff_index,
                 "bbox": item["bbox"],
                 "center": item["center"],
                 "pitch": {"step": letter, "octave": octave},
-                "shape_class": item["class"],
+                "shape_class": "corroded_filled_head" if is_corroded else item["class"],
                 "diatonic_step_from_bottom_line": step,
                 "pitch_confidence": item["confidence"],
                 "geometry_refinement": item.get("geometry_refinement"),
                 "beer_lambert_refinement": item.get("beer_lambert_refinement"),
                 "handwritten_ductus": item.get("handwritten_ductus"),
                 "cluster_type": item.get("cluster_type"),
+                "corrosion_perforation": item.get("corrosion_perforation"),
                 "duration": None,
                 "uncertainty": ["key_signature", "accidental", "duration", "voice", "instrument_or_part", "measure_assignment"],
             })
@@ -455,6 +465,9 @@ def analyze_array(
         bl_info = note.get("beer_lambert_refinement") or {}
         ductus = note.get("handwritten_ductus") or {}
         ductus_angle = float(ductus.get("pen_stroke_angle_deg", 0.0))
+        is_corroded = (note.get("shape_class") == "corroded_filled_head") or bool(
+            (note.get("corrosion_perforation") or {}).get("is_acid_cellulose_perforation")
+        )
         primitive = {
             "id": note["id"],
             "kind": "notehead",
@@ -466,6 +479,7 @@ def analyze_array(
                 "rotation_rad": float(np.radians(ductus_angle)) if ductus_angle else 0.0,
                 "bbox_px": [x, y, box_width, box_height],
                 "cluster_type": note.get("cluster_type"),
+                "corrosion_perforation": note.get("corrosion_perforation"),
             },
             "appearance": {
                 "ink_density_estimate": ink_density,
@@ -473,9 +487,12 @@ def analyze_array(
                 "measurement": "beer_lambert_log_optical_depth" if bl_info else "one_minus_mean_grayscale_inside_bbox",
                 "physical_absorbance_measured": bool(bl_info),
                 "handwritten_ductus": ductus if ductus else None,
+                "corrosion_perforation": note.get("corrosion_perforation"),
             },
             "symbolic": {
                 "pitch_proposal": dict(note["pitch"]),
+                "shape_class": "corroded_filled_head" if is_corroded else note.get("shape_class", "filled_head"),
+                "intended_symbolic_notehead": "filled_head" if is_corroded else note.get("shape_class", "filled_head"),
                 "accidental": note.get("accidental"),
                 "voice": note.get("inferred_voice", 1),
                 "chord_id": note.get("inferred_chord_id"),
@@ -805,7 +822,7 @@ def render_geometry_scene(shape: tuple[int, int], scene: dict, scale: float = 1.
         ductus = note.get("handwritten_ductus") or {}
         angle = float(fit.get("rotation_deg", 0.0)) if fit.get("accepted") else float(ductus.get("pen_stroke_angle_deg", 0.0))
         class_name = note.get("shape_class", "filled_head")
-        thickness = -1 if class_name == "filled_head" else max(1, int(round(ry * 0.35)))
+        thickness = -1 if class_name in ("filled_head", "corroded_filled_head") else max(1, int(round(ry * 0.35)))
         cv2.ellipse(
             image, (int(round(cx)), int(round(cy))), (rx, ry), angle,
             0, 360, 20, max(1, int(round(thickness * scale))) if thickness > 0 else -1, cv2.LINE_AA,

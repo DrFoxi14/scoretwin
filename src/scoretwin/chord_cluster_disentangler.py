@@ -20,6 +20,81 @@ import cv2
 import numpy as np
 
 
+def detect_internal_micro_lacuna_or_hole(
+    crop_binary: np.ndarray,
+    crop_gray: np.ndarray | None = None,
+    spacing: float = 16.0,
+) -> tuple[dict[str, Any] | None, np.ndarray]:
+    """Detect enclosed internal micro-lacunae / iron gall ink acid burn-through holes.
+
+    Returns:
+        (corrosion_info, repaired_binary)
+        If corrosion is detected, repaired_binary has the central hole filled
+        so the Euclidean distance transform produces a single, unbroken energy peak
+        at the invariant geometric center of the original notehead.
+    """
+    ch, cw = crop_binary.shape[:2]
+    sp = float(spacing)
+    if ch < 5 or cw < 5:
+        return None, crop_binary
+
+    inv = (crop_binary == 0).astype(np.uint8)
+    padded_inv = cv2.copyMakeBorder(inv, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=1)
+    mask_ff = np.zeros((ch + 4, cw + 4), dtype=np.uint8)
+    cv2.floodFill(padded_inv, mask_ff, (0, 0), 0)
+    enclosed_holes = (padded_inv[1:-1, 1:-1] > 0).astype(np.uint8) * 255
+    hole_area = int(np.count_nonzero(enclosed_holes))
+    if hole_area < 4 or hole_area > int(1.4 * sp * sp):
+        return None, crop_binary
+
+    cnts, _ = cv2.findContours(enclosed_holes, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not cnts:
+        return None, crop_binary
+
+    cnt = max(cnts, key=cv2.contourArea)
+    p_actual = cv2.arcLength(cnt, True)
+    if len(cnt) >= 5:
+        (hx, hy), (hma, hmi), hang = cv2.fitEllipse(cnt)
+        ha, hb = max(0.5, hma / 2.0), max(0.5, hmi / 2.0)
+        p_ideal = math.pi * (3.0 * (ha + hb) - math.sqrt((3.0 * ha + hb) * (ha + 3.0 * hb)))
+        jaggedness = float(p_actual / max(1e-3, p_ideal))
+    else:
+        m_h = cv2.moments(cnt)
+        hx = m_h["m10"] / m_h["m00"] if m_h["m00"] > 0 else cw / 2.0
+        hy = m_h["m01"] / m_h["m00"] if m_h["m00"] > 0 else ch / 2.0
+        jaggedness = 1.0
+
+    total_area = np.count_nonzero(crop_binary) + hole_area
+    hole_frac = hole_area / max(1.0, float(total_area))
+
+    lip_tau = 0.0
+    if crop_gray is not None and crop_gray.shape == crop_binary.shape:
+        hole_dil = cv2.dilate(enclosed_holes, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+        lip_mask = (hole_dil > 0) & (crop_binary > 0)
+        if np.any(lip_mask):
+            lip_tau = float(np.mean(-np.log(np.clip(crop_gray[lip_mask] / 240.0, 0.04, 1.0))))
+
+    # Distinguish iron gall acid burn-through perforation from intentional musical half notes:
+    # 1. Ragged, jagged cellulose contour (jaggedness >= 1.18)
+    # 2. Pinhole perforation (hole_frac <= 0.22)
+    # 3. High optical absorbance at hole lip (lip_tau >= 0.80)
+    is_corroded = bool(jaggedness >= 1.18 or hole_frac <= 0.22 or lip_tau >= 0.80)
+
+    corrosion_info = {
+        "detected": True,
+        "hole_area_px": hole_area,
+        "hole_fraction": round(hole_frac, 3),
+        "inner_contour_jaggedness": round(jaggedness, 3),
+        "is_acid_cellulose_perforation": is_corroded,
+        "lip_optical_depth_tau": round(lip_tau, 3),
+        "hole_centroid_local": [round(float(hx), 2), round(float(hy), 2)],
+        "original_intended_shape": "corroded_filled_head" if is_corroded else "hollow_head",
+        "cellulose_damage_mechanism": "iron_gall_acid_hydrolysis" if is_corroded else None,
+    }
+    repaired_binary = (crop_binary | enclosed_holes) if is_corroded else crop_binary
+    return corrosion_info, repaired_binary
+
+
 def disentangle_chord_cluster_component(
     crop_binary: np.ndarray,
     crop_gray: np.ndarray | None,
@@ -27,7 +102,7 @@ def disentangle_chord_cluster_component(
     global_offset_x: int,
     global_offset_y: int,
 ) -> list[dict[str, Any]]:
-    """Disentangle a merged chord cluster or handwritten ductus blob into individual noteheads."""
+    """Disentangle a merged chord cluster, handwritten ductus blob, or corroded notehead into individual noteheads."""
     ch, cw = crop_binary.shape[:2]
     sp = max(6.0, float(spacing))
     min_head_area = max(4, int(round(0.04 * sp * sp)))
@@ -35,8 +110,13 @@ def disentangle_chord_cluster_component(
     if ch < 3 or cw < 3 or np.count_nonzero(crop_binary) < min_head_area:
         return []
 
-    # 1. Compute Euclidean Distance Transform
-    dist = cv2.distanceTransform(crop_binary.astype(np.uint8), cv2.DIST_L2, 5)
+    # 0. Check for internal micro-lacuna / iron gall ink acid burn-through perforation
+    corrosion_info, proc_binary = detect_internal_micro_lacuna_or_hole(
+        crop_binary, crop_gray=crop_gray, spacing=sp
+    )
+
+    # 1. Compute Euclidean Distance Transform on proc_binary
+    dist = cv2.distanceTransform(proc_binary.astype(np.uint8), cv2.DIST_L2, 5)
     max_d = float(dist.max())
     if max_d < 0.20 * sp:
         return []
@@ -45,6 +125,10 @@ def disentangle_chord_cluster_component(
     if crop_gray is not None and crop_gray.shape == crop_binary.shape:
         # Ink pooling creates higher optical depth at notehead cores
         tau = np.maximum(0.0, -np.log(np.clip(crop_gray.astype(np.float64) / 240.0, 0.04, 1.0)))
+        if corrosion_info and corrosion_info.get("is_acid_cellulose_perforation"):
+            enclosed_holes = (proc_binary > 0) & (crop_binary == 0)
+            if np.any(enclosed_holes) and np.any(crop_binary > 0):
+                tau[enclosed_holes] = float(np.median(tau[crop_binary > 0]))
         tau_norm = tau / max(1e-4, np.max(tau))
         energy = dist * (0.65 + 0.35 * tau_norm)
     else:
@@ -149,6 +233,7 @@ def disentangle_chord_cluster_component(
                 "cluster_type": cluster_kind,
                 "chord_tone_index": p_idx,
                 "chord_tones_total": len(local_peaks),
+                "corrosion_perforation": corrosion_info,
                 "handwritten_ductus": {
                     "pen_stroke_angle_deg": ductus_angle_deg,
                     "major_axis_px": axis_major,
@@ -159,18 +244,27 @@ def disentangle_chord_cluster_component(
             })
 
     else:
-        # Single notehead (may be tilted handwritten ductus)
+        # Single notehead (may be tilted handwritten ductus or corroded iron gall burn-through)
         px, py, _ = local_peaks[0]
-        m = cv2.moments(crop_binary.astype(np.uint8))
-        if m["m00"] > 0:
-            cx = m["m10"] / m["m00"]
-            cy = m["m01"] / m["m00"]
-            mu20 = m["mu20"] / m["m00"]
-            mu02 = m["mu02"] / m["m00"]
-            mu11 = m["mu11"] / m["m00"]
-        else:
+        # If corroded hole is present, distance-transform peak (px, py) on repaired mask is invariant center
+        is_corr = bool(corrosion_info and corrosion_info.get("is_acid_cellulose_perforation"))
+        if is_corr:
             cx, cy = px, py
-            mu20, mu02, mu11 = (sp / 2.0) ** 2, (sp / 3.0) ** 2, 0.0
+            m = cv2.moments(proc_binary.astype(np.uint8))
+            mu20 = m["mu20"] / m["m00"] if m["m00"] > 0 else (sp / 2.0) ** 2
+            mu02 = m["mu02"] / m["m00"] if m["m00"] > 0 else (sp / 3.0) ** 2
+            mu11 = m["mu11"] / m["m00"] if m["m00"] > 0 else 0.0
+        else:
+            m = cv2.moments(crop_binary.astype(np.uint8))
+            if m["m00"] > 0:
+                cx = m["m10"] / m["m00"]
+                cy = m["m01"] / m["m00"]
+                mu20 = m["mu20"] / m["m00"]
+                mu02 = m["mu02"] / m["m00"]
+                mu11 = m["mu11"] / m["m00"]
+            else:
+                cx, cy = px, py
+                mu20, mu02, mu11 = (sp / 2.0) ** 2, (sp / 3.0) ** 2, 0.0
 
         theta = 0.5 * math.atan2(2.0 * mu11, mu20 - mu02)
         ductus_angle_deg = round(math.degrees(theta), 2)
@@ -179,15 +273,17 @@ def disentangle_chord_cluster_component(
         axis_minor = round(2.0 * math.sqrt(max(0.1, mu20 + mu02 - term)), 2)
         eccentricity = round(math.sqrt(max(0.0, 1.0 - (axis_minor / max(1e-4, axis_major)) ** 2)), 3)
 
+        c_type = "corroded_perforated_notehead" if is_corr else "single_notehead_ductus"
         disentangled_heads.append({
             "center_local": [round(cx, 2), round(cy, 2)],
             "center_global": [round(global_offset_x + cx, 2), round(global_offset_y + cy, 2)],
             "bbox_local": [0, 0, cw, ch],
             "bbox_global": [global_offset_x, global_offset_y, cw, ch],
             "area_px": int(np.count_nonzero(crop_binary)),
-            "cluster_type": "single_notehead_ductus",
+            "cluster_type": c_type,
             "chord_tone_index": 1,
             "chord_tones_total": 1,
+            "corrosion_perforation": corrosion_info,
             "handwritten_ductus": {
                 "pen_stroke_angle_deg": ductus_angle_deg,
                 "major_axis_px": axis_major,

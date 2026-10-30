@@ -534,6 +534,92 @@ def test_chord_cluster_disentangler_and_handwritten_ductus() -> None:
     assert np.array_equal(recon, score_gray), "Lossless 2D recomposition must be bit-exact"
 
 
+def test_iron_gall_ink_corrosion_perforation_and_micro_lacuna() -> None:
+    from scoretwin.chord_cluster_disentangler import (
+        detect_internal_micro_lacuna_or_hole,
+        disentangle_chord_cluster_component,
+    )
+    from scoretwin.pipeline import analyze_array, render_geometry_scene
+
+    sp = 16.0
+    h, w = 60, 60
+
+    # 1. Authentic simulated Iron Gall Ink Corroded Notehead (ragged acid burn-through)
+    corroded_binary = np.zeros((h, w), dtype=np.uint8)
+    cv2.ellipse(corroded_binary, (30, 30), (10, 7), -25, 0, 360, 255, -1)
+    hole_mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.ellipse(hole_mask, (30, 30), (5, 3), -25, 0, 360, 255, -1)
+    rng = np.random.RandomState(42)
+    noise = (rng.rand(h, w) > 0.4).astype(np.uint8) * 255
+    hole_ragged = cv2.bitwise_or(hole_mask, cv2.bitwise_and(cv2.dilate(hole_mask, np.ones((3, 3), np.uint8)), noise))
+    corroded_binary[hole_ragged > 0] = 0
+
+    c_info, rep_bin = detect_internal_micro_lacuna_or_hole(corroded_binary, spacing=sp)
+    assert c_info is not None
+    assert c_info["detected"] is True
+    assert c_info["is_acid_cellulose_perforation"] is True
+    assert c_info["inner_contour_jaggedness"] >= 1.18
+    assert c_info["original_intended_shape"] == "corroded_filled_head"
+
+    heads = disentangle_chord_cluster_component(
+        corroded_binary,
+        crop_gray=255 - corroded_binary,
+        spacing=sp,
+        global_offset_x=100,
+        global_offset_y=100,
+    )
+    assert len(heads) == 1, f"Must not fragment corroded donut into multiple fake peaks, got {len(heads)}"
+    assert abs(heads[0]["center_local"][0] - 30.0) < 1.0
+    assert abs(heads[0]["center_local"][1] - 30.0) < 1.0
+    assert heads[0]["cluster_type"] == "corroded_perforated_notehead"
+
+    # 2. Smooth Musical Half Note (intentional hollow notehead, no acid damage)
+    half_binary = np.zeros((h, w), dtype=np.uint8)
+    cv2.ellipse(half_binary, (30, 30), (10, 7), -25, 0, 360, 255, 2)
+    h_info, _ = detect_internal_micro_lacuna_or_hole(half_binary, spacing=sp)
+    assert h_info is not None
+    assert h_info["detected"] is True
+    assert h_info["is_acid_cellulose_perforation"] is False
+    assert h_info["inner_contour_jaggedness"] < 1.15
+    assert h_info["original_intended_shape"] == "hollow_head"
+
+    # 3. End-to-end integration test on a manuscript score page with corroded notehead
+    page_h, page_w = 300, 400
+    score_gray = np.full((page_h, page_w), 255, dtype=np.uint8)
+    for ly in [100, 116, 132, 148, 164]:
+        cv2.line(score_gray, (30, ly), (page_w - 30, ly), 30, 1)
+
+    # Insert corroded notehead at (150, 132) on middle staff line
+    cv2.ellipse(score_gray, (150, 132), (9, 6), -20, 0, 360, 30, -1)
+    cv2.line(score_gray, (158, 132), (158, 80), 30, 2)
+    # Ragged burn-through perforation hole in paper
+    h_lacuna = np.zeros((page_h, page_w), dtype=np.uint8)
+    cv2.ellipse(h_lacuna, (150, 132), (4, 3), -20, 0, 360, 255, -1)
+    noise_lacuna = (rng.rand(page_h, page_w) > 0.4).astype(np.uint8) * 255
+    h_ragged = cv2.bitwise_or(h_lacuna, cv2.bitwise_and(cv2.dilate(h_lacuna, np.ones((3, 3), np.uint8)), noise_lacuna))
+    score_gray[h_ragged > 0] = 250
+
+    scene = analyze_array(score_gray, adaptive_staffs=True, enable_extended_notation=True)
+    assert len(scene["notes"]) >= 1, "Corroded note must not be discarded!"
+    n0 = scene["notes"][0]
+    assert abs(n0["center"][0] - 150.0) < 1.5
+    assert abs(n0["center"][1] - 132.0) < 1.5
+    assert n0["shape_class"] == "corroded_filled_head"
+
+    # Primitives representation: symbolic output preserves original intended filled note (quarter note)
+    prims = [p for p in scene["primitives"] if p["id"] == n0["id"]]
+    assert len(prims) == 1
+    assert prims[0]["symbolic"]["intended_symbolic_notehead"] == "filled_head"
+    assert prims[0]["geometry"]["corrosion_perforation"]["is_acid_cellulose_perforation"] is True
+
+    # 2D Bit-Exact Lossless Identity (paper perforation preserved in residual)
+    gz = render_geometry_scene(score_gray.shape, scene)
+    res = score_gray.astype(np.int16) - gz.astype(np.int16)
+    res_u16 = (res + 255).astype(np.uint16)
+    recon = np.clip(gz.astype(np.int32) + res_u16.astype(np.int32) - 255, 0, 255).astype(np.uint8)
+    assert np.array_equal(recon, score_gray), "Lossless 2D recomposition must be bit-exact"
+
+
 
 
 

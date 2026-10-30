@@ -619,19 +619,37 @@ def extract_notehead_candidates(
         if area < min_area:
             continue
 
-        # Disentangle dense multi-note chord clusters, seconds, and handwritten ductus blobs
-        # Only invoke for wide clusters (w > 1.75*sp) or large area blobs (area > max_area)
+        # Check if component has an internal micro-lacuna / corrosive perforation hole
+        # Re-integrate local staff line pixels inside box so staff line cuts don't leak through the hole
+        comp_mask_raw = (labels[y : y + h, x : x + w] == component).astype(np.uint8) * 255
+        staff_patch = (
+            (binary[y : y + h, x : x + w] & staff_mask[y : y + h, x : x + w])
+            if (binary.shape[0] >= y + h and binary.shape[1] >= x + w)
+            else np.zeros_like(comp_mask_raw)
+        )
+        comp_mask_restored = comp_mask_raw | staff_patch
+
+        has_internal_hole = False
+        if 0.45 * spacing <= w <= 2.2 * spacing and 0.45 * spacing <= h <= 2.2 * spacing:
+            inv = (comp_mask_restored == 0).astype(np.uint8)
+            padded_inv = cv2.copyMakeBorder(inv, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=1)
+            mask_ff = np.zeros((h + 4, w + 4), dtype=np.uint8)
+            cv2.floodFill(padded_inv, mask_ff, (0, 0), 0)
+            if np.count_nonzero(padded_inv[1:-1, 1:-1]) >= 4:
+                has_internal_hole = True
+
+        # Disentangle dense multi-note chord clusters, seconds, wide ductus, or corroded holes
+        # Only invoke for wide clusters (w > 1.75*sp), large area blobs (area > max_area), or internal holes.
         # Normal vertical notes with attached stems are handled by the profile trimmer below.
-        is_cluster_or_ductus = bool(area > max_area or w > 1.75 * spacing)
+        is_cluster_or_ductus = bool(area > max_area or w > 1.75 * spacing or has_internal_hole)
         if is_cluster_or_ductus and w <= 5.5 * spacing and h <= 6.5 * spacing:
-            comp_mask = (labels[y : y + h, x : x + w] == component).astype(np.uint8) * 255
             comp_gray = (
                 gray[y : y + h, x : x + w]
                 if (gray.shape[0] >= y + h and gray.shape[1] >= x + w)
                 else None
             )
             disentangled = disentangle_chord_cluster_component(
-                comp_mask,
+                comp_mask_restored if has_internal_hole else comp_mask_raw,
                 comp_gray,
                 spacing=spacing,
                 global_offset_x=x,
@@ -664,6 +682,7 @@ def extract_notehead_candidates(
                         "staff_index": staff_index,
                         "handwritten_ductus": dh.get("handwritten_ductus"),
                         "cluster_type": dh.get("cluster_type"),
+                        "corrosion_perforation": dh.get("corrosion_perforation"),
                     })
                 continue
 
@@ -800,6 +819,9 @@ def extract_notehead_candidates(
                 "center": [center_x, center_y],
                 "area": total_area,
                 "staff_index": first["staff_index"],
+                "handwritten_ductus": first.get("handwritten_ductus") or second.get("handwritten_ductus"),
+                "cluster_type": first.get("cluster_type") or second.get("cluster_type"),
+                "corrosion_perforation": first.get("corrosion_perforation") or second.get("corrosion_perforation"),
             })
             used.update((i, best_j))
 
@@ -810,6 +832,9 @@ def extract_notehead_candidates(
             "center": component["center"],
             "area": component["area"],
             "staff_index": component["staff_index"],
+            "handwritten_ductus": component.get("handwritten_ductus"),
+            "cluster_type": component.get("cluster_type"),
+            "corrosion_perforation": component.get("corrosion_perforation"),
         })
 
     proposals: list[dict] = []
@@ -837,6 +862,7 @@ def extract_notehead_candidates(
             "crop": gray[crop_y0:crop_y1, crop_x0:crop_x1],
             "handwritten_ductus": item.get("handwritten_ductus"),
             "cluster_type": item.get("cluster_type"),
+            "corrosion_perforation": item.get("corrosion_perforation"),
         })
 
     proposals.sort(key=lambda item: (item["staff_index"], item["center"][0], item["center"][1]))

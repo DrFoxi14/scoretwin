@@ -617,7 +617,7 @@ def decolorize_and_investigate(
         "step": "4_contextual_target_query",
         "question": "Pentru cine să fie punct? Există o notă în stânga la înălțimea potrivită?",
         "preceding_note_found": nearest_left_note is not None,
-        "preceding_note_id": nearest_left_note["id"] if nearest_left_note else None,
+        "preceding_note_id": (nearest_left_note.get("id") or nearest_left_note.get("primitive_id")) if nearest_left_note else None,
         "preceding_note_distance_sp": round(min_dist_sp, 3) if nearest_left_note else None,
         "distance_outside_nearest_staff_sp": round(min_staff_dist_sp, 3),
     }
@@ -649,16 +649,18 @@ def decolorize_and_investigate(
     }
 
     # STEP 6: Deterministic physical + contextual conclusion (Zero 'unknown', zero 'abstain')
+    n_id = (nearest_left_note.get("id") or nearest_left_note.get("primitive_id", "note-left")) if nearest_left_note else None
+    n_dist_cm = float(nearest_left_note.get("exact_distance_from_preceding_bar_cm") or 0.0) if nearest_left_note else 0.0
     if has_quill_relief and nearest_left_note is not None and equiv_diam_sp <= 0.48:
         verdict = "RECOVERED_AUGMENTATION_OR_MORA_DOT"
         conclusion_text = (
             f"Urma de la ({cx:.1f}, {cy:.1f}) px are semnătură chimică ferogalică (Fe={max_chem_fe:.2f}) "
             f"și relief de pană ({min_relief_um:.2f} um), formă compactă (circularitate={circularity:.2f} la 40x zoom) "
-            f"și se află la {min_dist_sp:.2f} sp în dreapta notei {nearest_left_note['id']} "
-            f"(care e la {nearest_left_note['exact_distance_from_preceding_bar_cm']:.2f} cm de bară). "
+            f"și se află la {min_dist_sp:.2f} sp în dreapta notei {n_id} "
+            f"(care e la {n_dist_cm:.2f} cm de bară). "
             "Verdict: punct de augmentare / punctum mora atașat acelei note."
         )
-        attached_to = nearest_left_note["id"]
+        attached_to = n_id
     elif not has_quill_relief and nearest_left_note is None:
         verdict = "PROVEN_PHYSICAL_SUPPORT_RESIDUE_PRESERVED_VISUALLY"
         conclusion_text = (
@@ -673,7 +675,7 @@ def decolorize_and_investigate(
             f"Urmă fizică de cerneală confirmată la ({cx:.1f}, {cy:.1f}) px (Fe={max_chem_fe:.2f}, relief={min_relief_um:.2f} um), "
             "păstrată la poziția exactă în ontologia internă a paginii."
         )
-        attached_to = nearest_left_note["id"] if nearest_left_note else None
+        attached_to = n_id
 
     step6_conclusion = {
         "step": "6_conclude_role_without_abstention",
