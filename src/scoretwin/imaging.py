@@ -8,6 +8,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .chord_cluster_disentangler import disentangle_chord_cluster_component
+
 
 @dataclass(frozen=True)
 class StaffSystem:
@@ -614,7 +616,58 @@ def extract_notehead_candidates(
     for component in range(1, count):
         x, y, w, h, area = [int(value) for value in stats[component]]
         cx, cy = [float(value) for value in centroids[component]]
-        if area < min_area or area > max_area:
+        if area < min_area:
+            continue
+
+        # Disentangle dense multi-note chord clusters, seconds, and handwritten ductus blobs
+        # Only invoke for wide clusters (w > 1.75*sp) or large area blobs (area > max_area)
+        # Normal vertical notes with attached stems are handled by the profile trimmer below.
+        is_cluster_or_ductus = bool(area > max_area or w > 1.75 * spacing)
+        if is_cluster_or_ductus and w <= 5.5 * spacing and h <= 6.5 * spacing:
+            comp_mask = (labels[y : y + h, x : x + w] == component).astype(np.uint8) * 255
+            comp_gray = (
+                gray[y : y + h, x : x + w]
+                if (gray.shape[0] >= y + h and gray.shape[1] >= x + w)
+                else None
+            )
+            disentangled = disentangle_chord_cluster_component(
+                comp_mask,
+                comp_gray,
+                spacing=spacing,
+                global_offset_x=x,
+                global_offset_y=y,
+            )
+            if len(disentangled) >= 2 or (
+                len(disentangled) == 1
+                and (0.42 * spacing <= disentangled[0]["bbox_global"][2] <= 2.2 * spacing)
+                and (0.22 * spacing <= disentangled[0]["bbox_global"][3] <= 1.45 * spacing)
+            ):
+                for dh in disentangled:
+                    dcx, dcy = dh["center_global"]
+                    dbx, dby, dbw, dbh = dh["bbox_global"]
+                    d_area = dh["area_px"]
+                    staff_index = min(
+                        range(len(staffs)),
+                        key=lambda idx: min(
+                            abs(dcy - staffs[idx].top),
+                            abs(dcy - staffs[idx].bottom),
+                            abs(dcy - (staffs[idx].top + staffs[idx].bottom) / 2),
+                        ),
+                    )
+                    staff = staffs[staff_index]
+                    if dcy < staff.top - 2.0 * spacing or dcy > staff.bottom + 2.0 * spacing:
+                        continue
+                    components.append({
+                        "box": [dbx, dby, dbw, dbh],
+                        "center": [dcx, dcy],
+                        "area": d_area,
+                        "staff_index": staff_index,
+                        "handwritten_ductus": dh.get("handwritten_ductus"),
+                        "cluster_type": dh.get("cluster_type"),
+                    })
+                continue
+
+        if area > max_area:
             continue
         if not (0.52 * spacing <= w <= 2.0 * spacing):
             continue
@@ -782,6 +835,8 @@ def extract_notehead_candidates(
             "aspect_ratio": round(head_width / max(head_height, 1), 4),
             "staff_index": int(item["staff_index"]),
             "crop": gray[crop_y0:crop_y1, crop_x0:crop_x1],
+            "handwritten_ductus": item.get("handwritten_ductus"),
+            "cluster_type": item.get("cluster_type"),
         })
 
     proposals.sort(key=lambda item: (item["staff_index"], item["center"][0], item["center"][1]))

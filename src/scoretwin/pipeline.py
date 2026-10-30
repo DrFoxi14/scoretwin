@@ -158,6 +158,8 @@ def analyze_array(
                 "pitch_confidence": item["confidence"],
                 "geometry_refinement": item.get("geometry_refinement"),
                 "beer_lambert_refinement": item.get("beer_lambert_refinement"),
+                "handwritten_ductus": item.get("handwritten_ductus"),
+                "cluster_type": item.get("cluster_type"),
                 "duration": None,
                 "uncertainty": ["key_signature", "accidental", "duration", "voice", "instrument_or_part", "measure_assignment"],
             })
@@ -451,6 +453,8 @@ def analyze_array(
         ]
         ink_density = float(1.0 - np.mean(crop) / 255.0) if crop.size else 0.0
         bl_info = note.get("beer_lambert_refinement") or {}
+        ductus = note.get("handwritten_ductus") or {}
+        ductus_angle = float(ductus.get("pen_stroke_angle_deg", 0.0))
         primitive = {
             "id": note["id"],
             "kind": "notehead",
@@ -459,14 +463,16 @@ def analyze_array(
                 "center_y_px": center_y,
                 "radius_x_px": box_width / 2.0,
                 "radius_y_px": box_height / 2.0,
-                "rotation_rad": 0.0,
+                "rotation_rad": float(np.radians(ductus_angle)) if ductus_angle else 0.0,
                 "bbox_px": [x, y, box_width, box_height],
+                "cluster_type": note.get("cluster_type"),
             },
             "appearance": {
                 "ink_density_estimate": ink_density,
                 "optical_absorbance": bl_info.get("optical_absorbance", 1.45),
                 "measurement": "beer_lambert_log_optical_depth" if bl_info else "one_minus_mean_grayscale_inside_bbox",
                 "physical_absorbance_measured": bool(bl_info),
+                "handwritten_ductus": ductus if ductus else None,
             },
             "symbolic": {
                 "pitch_proposal": dict(note["pitch"]),
@@ -796,7 +802,8 @@ def render_geometry_scene(shape: tuple[int, int], scene: dict, scale: float = 1.
         rx = max(2, int(round(bbox[2] / 2.0)))
         ry = max(2, int(round(bbox[3] / 2.0)))
         fit = note.get("geometry_refinement") or {}
-        angle = float(fit.get("rotation_deg", 0.0)) if fit.get("accepted") else 0.0
+        ductus = note.get("handwritten_ductus") or {}
+        angle = float(fit.get("rotation_deg", 0.0)) if fit.get("accepted") else float(ductus.get("pen_stroke_angle_deg", 0.0))
         class_name = note.get("shape_class", "filled_head")
         thickness = -1 if class_name == "filled_head" else max(1, int(round(ry * 0.35)))
         cv2.ellipse(

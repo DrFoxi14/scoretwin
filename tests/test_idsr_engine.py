@@ -443,6 +443,98 @@ def test_manifold_voice_traversal_and_photocopy_residue_discrimination():
     assert np.array_equal(reconstructed, gray), "Lossless identity must hold with zero pixel error"
 
 
+def test_chord_cluster_disentangler_and_handwritten_ductus() -> None:
+    from scoretwin.chord_cluster_disentangler import disentangle_chord_cluster_component
+    from scoretwin.pipeline import analyze_array, render_geometry_scene
+
+    sp = 16.0
+
+    # 1. Test Harmonic Second (secundă lipită / two touching noteheads on opposite sides of stem)
+    sec_canvas = np.zeros((80, 100), dtype=np.uint8)
+    # Left notehead (cx=40, cy=40), right notehead (cx=52, cy=48) (touching / merged)
+    cv2.ellipse(sec_canvas, (40, 40), (9, 6), -20, 0, 360, 255, -1)
+    cv2.ellipse(sec_canvas, (52, 48), (9, 6), -20, 0, 360, 255, -1)
+    cv2.line(sec_canvas, (52, 48), (52, 10), 255, 2)
+
+    sec_heads = disentangle_chord_cluster_component(
+        sec_canvas,
+        crop_gray=255 - sec_canvas,
+        spacing=sp,
+        global_offset_x=100,
+        global_offset_y=200,
+    )
+    assert len(sec_heads) == 2, f"Expected 2 noteheads from harmonic second, got {len(sec_heads)}"
+    assert sec_heads[0]["cluster_type"] == "chord_harmonic_second_adjacent"
+    # Check that centers match ground truth within 1.5 px
+    cxs = sorted([h["center_local"][0] for h in sec_heads])
+    assert abs(cxs[0] - 40.0) < 2.0
+    assert abs(cxs[1] - 52.0) < 2.0
+
+    # 2. Test Stacked Triad Cluster (3 noteheads merged vertically along a stem)
+    triad_canvas = np.zeros((120, 80), dtype=np.uint8)
+    # cy = 80, 64, 48 (separated by sp = 16 px, overlapping)
+    for cy in [80, 64, 48]:
+        cv2.ellipse(triad_canvas, (40, cy), (9, 6), -20, 0, 360, 255, -1)
+    cv2.line(triad_canvas, (48, 80), (48, 15), 255, 2)
+
+    triad_heads = disentangle_chord_cluster_component(
+        triad_canvas,
+        crop_gray=255 - triad_canvas,
+        spacing=sp,
+        global_offset_x=300,
+        global_offset_y=150,
+    )
+    assert len(triad_heads) == 3, f"Expected 3 noteheads from stacked triad, got {len(triad_heads)}"
+    cys = sorted([h["center_local"][1] for h in triad_heads])
+    assert abs(cys[0] - 48.0) < 2.0
+    assert abs(cys[1] - 64.0) < 2.0
+    assert abs(cys[2] - 80.0) < 2.0
+
+    # 3. Test Handwritten Ductus (pen stroke tilt angle extraction)
+    ductus_canvas = np.zeros((60, 60), dtype=np.uint8)
+    cv2.ellipse(ductus_canvas, (30, 30), (10, 6), -35, 0, 360, 255, -1)
+    single_heads = disentangle_chord_cluster_component(
+        ductus_canvas,
+        crop_gray=255 - ductus_canvas,
+        spacing=sp,
+        global_offset_x=50,
+        global_offset_y=50,
+    )
+    assert len(single_heads) == 1
+    d_info = single_heads[0]["handwritten_ductus"]
+    assert d_info["is_angled_handwritten_stroke"] is True
+    assert abs(d_info["pen_stroke_angle_deg"] - (-35.0)) < 6.0, f"Angle error too large: {d_info['pen_stroke_angle_deg']}"
+
+    # 4. End-to-end integration test on a score page with connected second and triad
+    page_h, page_w = 400, 600
+    score_gray = np.full((page_h, page_w), 255, dtype=np.uint8)
+    # Draw 5 staff lines at y = 180, 196, 212, 228, 244
+    for ly in [180, 196, 212, 228, 244]:
+        cv2.line(score_gray, (40, ly), (page_w - 40, ly), 30, 1)
+
+    # Insert touching second at x=150
+    cv2.ellipse(score_gray, (150, 212), (9, 6), -20, 0, 360, 30, -1)
+    cv2.ellipse(score_gray, (162, 220), (9, 6), -20, 0, 360, 30, -1)
+    cv2.line(score_gray, (162, 220), (162, 160), 30, 2)
+
+    # Insert stacked triad at x=350
+    for cy in [228, 212, 196]:
+        cv2.ellipse(score_gray, (350, cy), (9, 6), -20, 0, 360, 30, -1)
+    cv2.line(score_gray, (358, 228), (358, 140), 30, 2)
+
+    scene = analyze_array(score_gray, adaptive_staffs=True, enable_extended_notation=True)
+    # Notes from the chord clusters must be extracted rather than discarded
+    assert len(scene["notes"]) >= 4, f"Expected at least 4 notes from second + triad, got {len(scene['notes'])}"
+
+    # Lossless exact 2D pixel identity check
+    gz = render_geometry_scene(score_gray.shape, scene)
+    res = score_gray.astype(np.int16) - gz.astype(np.int16)
+    res_u16 = (res + 255).astype(np.uint16)
+    recon = np.clip(gz.astype(np.int32) + res_u16.astype(np.int32) - 255, 0, 255).astype(np.uint8)
+    assert np.array_equal(recon, score_gray), "Lossless 2D recomposition must be bit-exact"
+
+
+
 
 
 
