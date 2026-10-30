@@ -212,13 +212,33 @@ function draw3d(){
   ctx.fillStyle='#e56f79';ctx.beginPath();ctx.ellipse(p[0],p[1],r*1.2,r, yaw*0.15,0,Math.PI*2);ctx.fill();
   ctx.fillStyle='#edf0f6';ctx.font='11px system-ui';ctx.fillText(note.pitch.step+note.pitch.octave+'?',p[0]+r+2,p[1]-r);
  });
+ (currentScene.primitives||[]).filter(p=>p.kind==='lyric_syllable'||p.kind==='lyric_hyphen').forEach(lyr=>{
+  const g=lyr.geometry||{};const bx=Number(g.center_x_px||(g.bbox_px&&g.bbox_px[0])||0)-cx0;const by=Number(g.center_y_px||(g.bbox_px&&g.bbox_px[1])||0)-cy0;
+  const p=projectPoint(bx+cx0,by+cy0,sep*0.70);
+  ctx.fillStyle='#61afef';ctx.fillRect(p[0]-2,p[1]-2,4,4);
+ });
+ (currentScene.primitives||[]).filter(p=>(p.kind&&p.kind.startsWith('dynamic'))||(p.kind&&p.kind.startsWith('hairpin'))).forEach(dyn=>{
+  const g=dyn.geometry||{};const bx=Number((g.bbox_px&&g.bbox_px[0])||0)-cx0;const by=Number((g.bbox_px&&g.bbox_px[1])||0)-cy0;
+  const p=projectPoint(bx+cx0,by+cy0,sep*0.90);
+  ctx.fillStyle='#e5c07b';ctx.fillRect(p[0]-3,p[1]-3,6,6);
+ });
+ (currentScene.primitives||[]).filter(p=>p.kind==='volta_bracket').forEach(vlt=>{
+  const g=vlt.geometry||{};const vx0=Number(g.vx0||(g.bbox_px&&g.bbox_px[0])||0);const vx1=Number(g.vx1||(vx0+60));const ry=Number(g.roof_y||(g.bbox_px&&g.bbox_px[1])||0);
+  const a=projectPoint(vx0,ry,sep*1.50);const b=projectPoint(vx1,ry,sep*1.50);
+  ctx.strokeStyle='#c678dd';ctx.lineWidth=2.0;ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+ });
+ (currentScene.primitives||[]).filter(p=>p.kind&&(p.kind.includes('annotation')||p.kind.includes('redteam'))).forEach(ann=>{
+  const g=ann.geometry||{};const bx=Number((g.bbox_px&&g.bbox_px[0])||0)-cx0;const by=Number((g.bbox_px&&g.bbox_px[1])||0)-cy0;
+  const p=projectPoint(bx+cx0,by+cy0,sep*2.0);
+  ctx.fillStyle='#ff5555';ctx.fillRect(p[0]-4,p[1]-4,8,8);
+ });
  currentScene.unknown_objects.forEach(item=>{
   const x=Number(item.center[0])-cx0,y=Number(item.center[1])-cy0;
   const p=projectPoint(x+cx0,y+cy0,sep*0.3);
   ctx.fillStyle='#e3b35b';ctx.fillRect(p[0]-3,p[1]-3,6,6);
  });
  ctx.fillStyle='#9da8b9';ctx.font='12px system-ui';
- ctx.fillText('x/y: observed page coordinates · z: semantic visualization only',16,24);
+ ctx.fillText('x/y: observed page coordinates · z: semantic visualization (Z0:Staff Z0.65:Notes Z0.70:Lyrics Z0.90:Dyn Z1.5:Volta Z2.0:Annotations)',16,24);
 }
 function buildEditor(){
  const holder=document.getElementById('editor');holder.replaceChildren();
@@ -479,6 +499,11 @@ async def analyze(
                     "staff_count": len(scene["staffs"]),
                     "proposals": scene["proposal_count"],
                     "notehead_proposals": scene["note_count"],
+                    "dynamic_lyrics_count": len((scene.get("idsr_dynamic_layer") or {}).get("dynamic_lyrics_detected", [])),
+                    "dynamic_dynamics_count": len((scene.get("idsr_dynamic_layer") or {}).get("dynamic_dynamics_detected", [])),
+                    "dynamic_voltas_count": len((scene.get("idsr_dynamic_layer") or {}).get("dynamic_volta_brackets_detected", [])),
+                    "investigated_traces_count": len((scene.get("idsr_dynamic_layer") or {}).get("investigated_traces", [])),
+                    "zero_abstentions_verified": bool((scene.get("idsr_dynamic_layer") or {}).get("abstained_or_unknown_count", 0) == 0),
                     "runtime_seconds": scene["runtime_seconds"],
                 },
                 "warnings": scene["warnings"],

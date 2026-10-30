@@ -1,0 +1,1774 @@
+{
+  "schema": "idsr-m2-data-real-20pages-v1",
+  "generated_at": "2026-10-30",
+  "seed": 20261030,
+  "code_modified_before_run": false,
+  "acquisition_note": "Evaluated 20 real full-resolution scanned pages (measured spacing 15.00 to 21.50 px/sp) paired with their vector ground-truth PDFs from /Users/paul_s/Projects/omr-satb/mac/date/perechi/. Physical live dual-phone DNG+flash shooting was not possible in this headless environment; existing full-res scans were used instead of downsampled thumbnails.",
+  "software": {
+    "scoretwin": "0.1.0",
+    "python": "3.12.14",
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "numpy": "2.5.4",
+    "opencv": "4.14.0",
+    "total_runtime_seconds": 191.305
+  },
+  "aggregate_summary_n20": {
+    "pages_n": 20,
+    "pages_with_f1_below_0_30": 20,
+    "fraction_pages_f1_below_0_30": 1.0,
+    "pearson_r_spacing_vs_f1": -0.2683,
+    "measured_scan_spacing_px": {
+      "mean": 17.15,
+      "median": 16.375,
+      "p95": 21.2625,
+      "min": 15.125,
+      "max": 21.5,
+      "std": 1.9384,
+      "bootstrap_95_ci": [
+        16.375,
+        18.0189
+      ]
+    },
+    "notehead_f1": {
+      "mean": 0.0299,
+      "median": 0.0124,
+      "p95": 0.0965,
+      "min": 0.0,
+      "max": 0.1113,
+      "std": 0.0379,
+      "bootstrap_95_ci": [
+        0.0142,
+        0.0466
+      ]
+    },
+    "center_error_mean_sp": {
+      "mean": 0.4696,
+      "median": 0.5,
+      "p95": 0.5743,
+      "min": 0.2951,
+      "max": 0.5797,
+      "std": 0.0736,
+      "bootstrap_95_ci": [
+        0.4368,
+        0.4998
+      ]
+    },
+    "center_error_p95_sp": {
+      "mean": 0.6615,
+      "median": 0.6239,
+      "p95": 0.8,
+      "min": 0.407,
+      "max": 0.8,
+      "std": 0.1258,
+      "bootstrap_95_ci": [
+        0.6058,
+        0.714
+      ]
+    },
+    "staff_detection_rate": {
+      "mean": 0.9909,
+      "median": 1.0,
+      "p95": 1.0,
+      "min": 0.8182,
+      "max": 1.0,
+      "std": 0.0407,
+      "bootstrap_95_ci": [
+        0.9727,
+        1.0
+      ]
+    },
+    "did_scalar": {
+      "mean": 7.1351,
+      "median": 6.9478,
+      "p95": 8.19,
+      "min": 5.8513,
+      "max": 8.7487,
+      "std": 0.6722,
+      "bootstrap_95_ci": [
+        6.8648,
+        7.4307
+      ]
+    },
+    "residual_size_kb": {
+      "mean": 1291.7095,
+      "median": 1130.735,
+      "p95": 2383.818,
+      "min": 663.08,
+      "max": 3555.89,
+      "std": 689.0145,
+      "bootstrap_95_ci": [
+        1033.8338,
+        1632.6621
+      ]
+    },
+    "mdl_excess_bits_per_px": {
+      "mean": 4.818,
+      "median": 4.8529,
+      "p95": 5.4297,
+      "min": 3.9352,
+      "max": 5.4817,
+      "std": 0.4609,
+      "bootstrap_95_ci": [
+        4.6117,
+        5.008
+      ]
+    },
+    "all_float64_reconstruction_error_zero": true,
+    "all_uint8_pixel_diff_zero": true
+  },
+  "raw_eval_summary": {
+    "benchmark": "real-registered-scan-vs-digital-pairs-v1",
+    "pairs_n": 20,
+    "reference_staffs_total": 176,
+    "baseline_v0_1_staffs_detected_total": 57,
+    "baseline_v0_1_staff_recall": 0.3239,
+    "idsr_v0_2_staffs_detected_total": 180,
+    "idsr_v0_2_staff_recall": 1.0227,
+    "baseline_v0_1_mean_notehead_f1": 0.0049,
+    "idsr_v0_2_mean_notehead_f1": 0.0299,
+    "baseline_v0_1_mean_did": 12.3062,
+    "idsr_v0_2_mean_did": 7.1351
+  },
+  "per_page": [
+    {
+      "pair_id": "pair_027_p2",
+      "sha256": "d2c972a3414ff24c01dfc2f2f69302b773a4eb00f53c5f8750d8e9a14760a9ba",
+      "page_dimensions_px": [
+        1769,
+        2673
+      ],
+      "ransac_alignment_inliers": 40,
+      "reference_digital": {
+        "staffs_n": 8,
+        "notes_n": 271,
+        "spacing_px": 16.0
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 2,
+        "notes_detected_n": 21,
+        "notehead_precision": 0.0952,
+        "notehead_recall": 0.0074,
+        "notehead_f1": 0.0137,
+        "mean_center_error_sp": 0.3518,
+        "did_scalar": 7.2008
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 8,
+        "systems_detected_n": 4,
+        "notes_detected_n": 126,
+        "accidentals_detected_n": 0,
+        "beams_detected_n": 0,
+        "dots_detected_n": 10,
+        "chords_detected_n": 41,
+        "notehead_precision": 0.1508,
+        "notehead_recall": 0.0701,
+        "notehead_f1": 0.0957,
+        "matched_pitch_accuracy": 0.8421,
+        "mean_center_error_sp": 0.3679,
+        "p95_center_error_sp": 0.5974,
+        "did_scalar": 6.051,
+        "did_vector": {
+          "mean_position_error_sp": 0.3679,
+          "mask_iou": 0.1054,
+          "one_minus_iou": 0.8946,
+          "layout_emd_sp": 1.7124,
+          "anchored_ser": 0.9194,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.15505,
+          "mdl_excess_bits_per_pixel": 4.74133,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 4728537,
+          "n_primitives": 391,
+          "n_relations": 562,
+          "parametric_bits_total": 39543.0,
+          "parametric_bits_per_pixel": 0.008363,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 5.7884,
+          "mdl_excess_bits_per_pixel": 4.74133,
+          "raw_image_zlib_bits_per_pixel": 2.9915,
+          "residual_int16_zlib_bits_per_pixel": 3.6022,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.7251
+      },
+      "metadata": {
+        "pair_folder": "27",
+        "page_index": 2,
+        "title_source": "027. Psalmul 22_scanat.pdf",
+        "category": "psalm_classic_print",
+        "scan_pdf_sha256": "58f73134d95486976f04f9daa125333270d80bfbc73f16c7bfcad9a8f708bdb0",
+        "bun_pdf_sha256": "d703ddce18bd2636f995c684639f0f94b937d7fccd627cbec9394fdecaac5bdc",
+        "measured_scan_spacing_px": 16.5,
+        "scan_staffs_detected_n": 8
+      },
+      "measured_scan_spacing_px": 16.5,
+      "residual_size_kb": 2227.85,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_027_p3",
+      "sha256": "1322bf7d897e43b59411e99e280195e14e2e10be7fadb2c63b74780846f9d67b",
+      "page_dimensions_px": [
+        1641,
+        2449
+      ],
+      "ransac_alignment_inliers": 35,
+      "reference_digital": {
+        "staffs_n": 7,
+        "notes_n": 196,
+        "spacing_px": 14.75
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 0,
+        "notes_detected_n": 0,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 21.1117
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 7,
+        "systems_detected_n": 7,
+        "notes_detected_n": 94,
+        "accidentals_detected_n": 1,
+        "beams_detected_n": 0,
+        "dots_detected_n": 17,
+        "chords_detected_n": 24,
+        "notehead_precision": 0.1277,
+        "notehead_recall": 0.0612,
+        "notehead_f1": 0.0828,
+        "matched_pitch_accuracy": 0.75,
+        "mean_center_error_sp": 0.3955,
+        "p95_center_error_sp": 0.6332,
+        "did_scalar": 5.8513,
+        "did_vector": {
+          "mean_position_error_sp": 0.3955,
+          "mask_iou": 0.1651,
+          "one_minus_iou": 0.8349,
+          "layout_emd_sp": 2.4792,
+          "anchored_ser": 0.9379,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.13011,
+          "mdl_excess_bits_per_pixel": 4.16592,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 4018809,
+          "n_primitives": 391,
+          "n_relations": 504,
+          "parametric_bits_total": 38151.0,
+          "parametric_bits_per_pixel": 0.009493,
+          "oracle_noise_bits_per_pixel": 1.4542,
+          "model_total_bits_per_pixel": 5.6201,
+          "mdl_excess_bits_per_pixel": 4.16592,
+          "raw_image_zlib_bits_per_pixel": 3.5696,
+          "residual_int16_zlib_bits_per_pixel": 4.2637,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.6223
+      },
+      "metadata": {
+        "pair_folder": "27",
+        "page_index": 3,
+        "title_source": "027. Psalmul 22_scanat.pdf",
+        "category": "psalm_classic_print",
+        "scan_pdf_sha256": "58f73134d95486976f04f9daa125333270d80bfbc73f16c7bfcad9a8f708bdb0",
+        "bun_pdf_sha256": "d703ddce18bd2636f995c684639f0f94b937d7fccd627cbec9394fdecaac5bdc",
+        "measured_scan_spacing_px": 15.75,
+        "scan_staffs_detected_n": 7
+      },
+      "measured_scan_spacing_px": 15.75,
+      "residual_size_kb": 2322.13,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_067_p1",
+      "sha256": "3cabcc2a0f0b1d3597ff8d84868ceb2197a8a84df32b6f1ece7afa87408e8284",
+      "page_dimensions_px": [
+        1972,
+        2871
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 12,
+        "notes_n": 264,
+        "spacing_px": 17.5
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 0,
+        "notes_detected_n": 0,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 21.3581
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 12,
+        "systems_detected_n": 12,
+        "notes_detected_n": 138,
+        "accidentals_detected_n": 2,
+        "beams_detected_n": 0,
+        "dots_detected_n": 15,
+        "chords_detected_n": 26,
+        "notehead_precision": 0.0362,
+        "notehead_recall": 0.0189,
+        "notehead_f1": 0.0249,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.5222,
+        "p95_center_error_sp": 0.6145,
+        "did_scalar": 7.2318,
+        "did_vector": {
+          "mean_position_error_sp": 0.5222,
+          "mask_iou": 0.0376,
+          "one_minus_iou": 0.9624,
+          "layout_emd_sp": 3.429,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.21784,
+          "mdl_excess_bits_per_pixel": 5.13949,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 5661612,
+          "n_primitives": 626,
+          "n_relations": 782,
+          "parametric_bits_total": 60098.0,
+          "parametric_bits_per_pixel": 0.010615,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 6.1866,
+          "mdl_excess_bits_per_pixel": 5.13949,
+          "raw_image_zlib_bits_per_pixel": 0.7066,
+          "residual_int16_zlib_bits_per_pixel": 0.9523,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.8141
+      },
+      "metadata": {
+        "pair_folder": "67",
+        "page_index": 1,
+        "title_source": "067. Hristos din morți a înviat_scanat.pdf",
+        "category": "liturgical_classic",
+        "scan_pdf_sha256": "c6b26082b05318d96203142df2f21f8ba0c4e2ed5c2e217e4ce8518f8d6ae305",
+        "bun_pdf_sha256": "5a0c8e1587130dcfd6fc4f8d4e6d21e5efe7f7594983f1d7cab38f21b7268f80",
+        "measured_scan_spacing_px": 16.125,
+        "scan_staffs_detected_n": 12
+      },
+      "measured_scan_spacing_px": 16.125,
+      "residual_size_kb": 783.66,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_076_p0",
+      "sha256": "95c051f048e7d224c653d278f4d77247ff91900ce63df13f4817b0a141727d7c",
+      "page_dimensions_px": [
+        2106,
+        3049
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 8,
+        "notes_n": 187,
+        "spacing_px": 19.75
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 7,
+        "notes_detected_n": 19,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 7.4542
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 11,
+        "systems_detected_n": 11,
+        "notes_detected_n": 46,
+        "accidentals_detected_n": 0,
+        "beams_detected_n": 3,
+        "dots_detected_n": 7,
+        "chords_detected_n": 1,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.5,
+        "p95_center_error_sp": 0.8,
+        "did_scalar": 6.9268,
+        "did_vector": {
+          "mean_position_error_sp": 0.25,
+          "mask_iou": 0.036,
+          "one_minus_iou": 0.964,
+          "layout_emd_sp": 3.5438,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.21573,
+          "mdl_excess_bits_per_pixel": 5.20699,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 6421194,
+          "n_primitives": 402,
+          "n_relations": 441,
+          "parametric_bits_total": 37354.0,
+          "parametric_bits_per_pixel": 0.005817,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 6.2541,
+          "mdl_excess_bits_per_pixel": 5.20699,
+          "raw_image_zlib_bits_per_pixel": 1.0846,
+          "residual_int16_zlib_bits_per_pixel": 1.3956,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.719
+      },
+      "metadata": {
+        "pair_folder": "76",
+        "page_index": 0,
+        "title_source": "076. Fără harul Tău_scanat.pdf",
+        "category": "coral_lyrics_dense",
+        "scan_pdf_sha256": "34a40f37c6f1b4f16fcb1d3ca619856b649beef561320f230061c624c57d16cf",
+        "bun_pdf_sha256": "1d4b3a5a84924e19d80de88ece22d77c46b09c2227d9815bf747509dd4d6685c",
+        "measured_scan_spacing_px": 15.5,
+        "scan_staffs_detected_n": 11
+      },
+      "measured_scan_spacing_px": 15.5,
+      "residual_size_kb": 1211.98,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_076_p2",
+      "sha256": "cdfd614e5e792c65569c61b697b03d094c7faffa8c64c2c6a58e3efd5f67e771",
+      "page_dimensions_px": [
+        2206,
+        3408
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 10,
+        "notes_n": 310,
+        "spacing_px": 22.0
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 9,
+        "notes_detected_n": 13,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 5.8963
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 12,
+        "systems_detected_n": 12,
+        "notes_detected_n": 40,
+        "accidentals_detected_n": 0,
+        "beams_detected_n": 1,
+        "dots_detected_n": 2,
+        "chords_detected_n": 0,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.5,
+        "p95_center_error_sp": 0.8,
+        "did_scalar": 6.8953,
+        "did_vector": {
+          "mean_position_error_sp": 0.25,
+          "mask_iou": 0.0354,
+          "one_minus_iou": 0.9646,
+          "layout_emd_sp": 2.5351,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.24184,
+          "mdl_excess_bits_per_pixel": 5.42701,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 7518048,
+          "n_primitives": 409,
+          "n_relations": 440,
+          "parametric_bits_total": 37785.0,
+          "parametric_bits_per_pixel": 0.005026,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 6.4741,
+          "mdl_excess_bits_per_pixel": 5.42701,
+          "raw_image_zlib_bits_per_pixel": 1.1193,
+          "residual_int16_zlib_bits_per_pixel": 1.4336,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.817
+      },
+      "metadata": {
+        "pair_folder": "76",
+        "page_index": 2,
+        "title_source": "076. Fără harul Tău_scanat.pdf",
+        "category": "coral_lyrics_dense",
+        "scan_pdf_sha256": "34a40f37c6f1b4f16fcb1d3ca619856b649beef561320f230061c624c57d16cf",
+        "bun_pdf_sha256": "1d4b3a5a84924e19d80de88ece22d77c46b09c2227d9815bf747509dd4d6685c",
+        "measured_scan_spacing_px": 17.5,
+        "scan_staffs_detected_n": 12
+      },
+      "measured_scan_spacing_px": 17.5,
+      "residual_size_kb": 1465.08,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_080_p0",
+      "sha256": "23c594ad6209ac3e8d505b276939d25dac0103cd9db53126b5cce88839841ac6",
+      "page_dimensions_px": [
+        2072,
+        3197
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 8,
+        "notes_n": 122,
+        "spacing_px": 19.375
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 3,
+        "notes_detected_n": 25,
+        "notehead_precision": 0.16,
+        "notehead_recall": 0.0328,
+        "notehead_f1": 0.0544,
+        "mean_center_error_sp": 0.4452,
+        "did_scalar": 10.0539
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 8,
+        "systems_detected_n": 4,
+        "notes_detected_n": 66,
+        "accidentals_detected_n": 0,
+        "beams_detected_n": 3,
+        "dots_detected_n": 18,
+        "chords_detected_n": 5,
+        "notehead_precision": 0.1061,
+        "notehead_recall": 0.0574,
+        "notehead_f1": 0.0745,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.2951,
+        "p95_center_error_sp": 0.407,
+        "did_scalar": 8.1606,
+        "did_vector": {
+          "mean_position_error_sp": 0.2951,
+          "mask_iou": 0.0112,
+          "one_minus_iou": 0.9888,
+          "layout_emd_sp": 9.704,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.18227,
+          "mdl_excess_bits_per_pixel": 4.84763,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 6624184,
+          "n_primitives": 378,
+          "n_relations": 448,
+          "parametric_bits_total": 35962.0,
+          "parametric_bits_per_pixel": 0.005429,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 5.8947,
+          "mdl_excess_bits_per_pixel": 4.84763,
+          "raw_image_zlib_bits_per_pixel": 0.9418,
+          "residual_int16_zlib_bits_per_pixel": 1.2064,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.7292
+      },
+      "metadata": {
+        "pair_folder": "80",
+        "page_index": 0,
+        "title_source": "080. Viața mea să-i cânte Lui_scanat.pdf",
+        "category": "contemporary_print_clean",
+        "scan_pdf_sha256": "dd667d12ecd22a7c4b38ba35a8d9c27af968eb48494a487fd4e3a2e22682a9cc",
+        "bun_pdf_sha256": "ea985fc9ed66d55239525ab16a409dfc99b89fbbfa43f4bccdecd5bd87f3a7bf",
+        "measured_scan_spacing_px": 19.25,
+        "scan_staffs_detected_n": 8
+      },
+      "measured_scan_spacing_px": 19.25,
+      "residual_size_kb": 959.89,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_080_p1",
+      "sha256": "96dd2df518bb3b5965862d9d200772b3f80ac7dddb45da6c6884cda1f09d4ff8",
+      "page_dimensions_px": [
+        2042,
+        3128
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 9,
+        "notes_n": 192,
+        "spacing_px": 18.75
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 4,
+        "notes_detected_n": 50,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 9.1971
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 9,
+        "systems_detected_n": 9,
+        "notes_detected_n": 77,
+        "accidentals_detected_n": 0,
+        "beams_detected_n": 1,
+        "dots_detected_n": 19,
+        "chords_detected_n": 9,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.5,
+        "p95_center_error_sp": 0.8,
+        "did_scalar": 6.9425,
+        "did_vector": {
+          "mean_position_error_sp": 0.25,
+          "mask_iou": 0.0066,
+          "one_minus_iou": 0.9934,
+          "layout_emd_sp": 4.54,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.18685,
+          "mdl_excess_bits_per_pixel": 4.9586,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 6387376,
+          "n_primitives": 485,
+          "n_relations": 567,
+          "parametric_bits_total": 45773.0,
+          "parametric_bits_per_pixel": 0.007166,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 6.0057,
+          "mdl_excess_bits_per_pixel": 4.9586,
+          "raw_image_zlib_bits_per_pixel": 1.1048,
+          "residual_int16_zlib_bits_per_pixel": 1.4123,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.7649
+      },
+      "metadata": {
+        "pair_folder": "80",
+        "page_index": 1,
+        "title_source": "080. Viața mea să-i cânte Lui_scanat.pdf",
+        "category": "contemporary_print_clean",
+        "scan_pdf_sha256": "dd667d12ecd22a7c4b38ba35a8d9c27af968eb48494a487fd4e3a2e22682a9cc",
+        "bun_pdf_sha256": "ea985fc9ed66d55239525ab16a409dfc99b89fbbfa43f4bccdecd5bd87f3a7bf",
+        "measured_scan_spacing_px": 19.25,
+        "scan_staffs_detected_n": 9
+      },
+      "measured_scan_spacing_px": 19.25,
+      "residual_size_kb": 1069.28,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_080_p2",
+      "sha256": "9619c91ddb03375b515c989df3d2944a412ca4dd8b3da2bbf076f1ec8f9608ca",
+      "page_dimensions_px": [
+        2395,
+        3647
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 9,
+        "notes_n": 197,
+        "spacing_px": 22.0
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 0,
+        "notes_detected_n": 0,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 21.1561
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 9,
+        "systems_detected_n": 9,
+        "notes_detected_n": 102,
+        "accidentals_detected_n": 0,
+        "beams_detected_n": 4,
+        "dots_detected_n": 16,
+        "chords_detected_n": 11,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.5,
+        "p95_center_error_sp": 0.8,
+        "did_scalar": 7.3781,
+        "did_vector": {
+          "mean_position_error_sp": 0.25,
+          "mask_iou": 0.0089,
+          "one_minus_iou": 0.9911,
+          "layout_emd_sp": 6.6935,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.18223,
+          "mdl_excess_bits_per_pixel": 4.8478,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 8734565,
+          "n_primitives": 486,
+          "n_relations": 597,
+          "parametric_bits_total": 46558.0,
+          "parametric_bits_per_pixel": 0.00533,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 5.8949,
+          "mdl_excess_bits_per_pixel": 4.8478,
+          "raw_image_zlib_bits_per_pixel": 0.9301,
+          "residual_int16_zlib_bits_per_pixel": 1.195,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.9814
+      },
+      "metadata": {
+        "pair_folder": "80",
+        "page_index": 2,
+        "title_source": "080. Viața mea să-i cânte Lui_scanat.pdf",
+        "category": "contemporary_print_clean",
+        "scan_pdf_sha256": "dd667d12ecd22a7c4b38ba35a8d9c27af968eb48494a487fd4e3a2e22682a9cc",
+        "bun_pdf_sha256": "ea985fc9ed66d55239525ab16a409dfc99b89fbbfa43f4bccdecd5bd87f3a7bf",
+        "measured_scan_spacing_px": 21.5,
+        "scan_staffs_detected_n": 9
+      },
+      "measured_scan_spacing_px": 21.5,
+      "residual_size_kb": 1249.07,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_082_p0",
+      "sha256": "cf0065804d2c85ef33263628c2c71789b6d2736d1ca3279c701aaf9c2135b9b5",
+      "page_dimensions_px": [
+        2081,
+        3066
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 7,
+        "notes_n": 83,
+        "spacing_px": 19.75
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 0,
+        "notes_detected_n": 0,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 20.0925
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 7,
+        "systems_detected_n": 7,
+        "notes_detected_n": 77,
+        "accidentals_detected_n": 1,
+        "beams_detected_n": 0,
+        "dots_detected_n": 9,
+        "chords_detected_n": 14,
+        "notehead_precision": 0.013,
+        "notehead_recall": 0.012,
+        "notehead_f1": 0.0125,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.574,
+        "p95_center_error_sp": 0.574,
+        "did_scalar": 7.0206,
+        "did_vector": {
+          "mean_position_error_sp": 0.574,
+          "mask_iou": 0.0237,
+          "one_minus_iou": 0.9763,
+          "layout_emd_sp": 6.1012,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.12902,
+          "mdl_excess_bits_per_pixel": 4.03638,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 6380346,
+          "n_primitives": 184,
+          "n_relations": 269,
+          "parametric_bits_total": 19056.0,
+          "parametric_bits_per_pixel": 0.002987,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 5.0835,
+          "mdl_excess_bits_per_pixel": 4.03638,
+          "raw_image_zlib_bits_per_pixel": 0.7527,
+          "residual_int16_zlib_bits_per_pixel": 0.9697,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.6178
+      },
+      "metadata": {
+        "pair_folder": "82",
+        "page_index": 0,
+        "title_source": "082. Numele tău e Victorie_scanat.pdf",
+        "category": "contemporary_print_clean",
+        "scan_pdf_sha256": "dfccedf463f2c86eb9c7701d5d449ec4e369c630d06563a4e22a94a98601e179",
+        "bun_pdf_sha256": "d89aeef3ecc359cb1a1b31cca2deeae80ff9fda3d3cc5e8f33d5ce752963417f",
+        "measured_scan_spacing_px": 17.75,
+        "scan_staffs_detected_n": 7
+      },
+      "measured_scan_spacing_px": 17.75,
+      "residual_size_kb": 739.35,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_083_p0",
+      "sha256": "976f9edb3fa0dadba65b5735644b287301cea354e2de479c1686fbe2b28a0dc6",
+      "page_dimensions_px": [
+        1940,
+        2818
+      ],
+      "ransac_alignment_inliers": 40,
+      "reference_digital": {
+        "staffs_n": 8,
+        "notes_n": 169,
+        "spacing_px": 17.0
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 8,
+        "notes_detected_n": 35,
+        "notehead_precision": 0.0857,
+        "notehead_recall": 0.0178,
+        "notehead_f1": 0.0294,
+        "mean_center_error_sp": 0.4477,
+        "did_scalar": 5.0355
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 8,
+        "systems_detected_n": 8,
+        "notes_detected_n": 49,
+        "accidentals_detected_n": 0,
+        "beams_detected_n": 2,
+        "dots_detected_n": 10,
+        "chords_detected_n": 1,
+        "notehead_precision": 0.102,
+        "notehead_recall": 0.0296,
+        "notehead_f1": 0.0459,
+        "matched_pitch_accuracy": 0.2,
+        "mean_center_error_sp": 0.4449,
+        "p95_center_error_sp": 0.5137,
+        "did_scalar": 6.953,
+        "did_vector": {
+          "mean_position_error_sp": 0.4449,
+          "mask_iou": 0.1065,
+          "one_minus_iou": 0.8935,
+          "layout_emd_sp": 3.4809,
+          "anchored_ser": 0.9908,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.19666,
+          "mdl_excess_bits_per_pixel": 5.00199,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 5466920,
+          "n_primitives": 370,
+          "n_relations": 420,
+          "parametric_bits_total": 34770.0,
+          "parametric_bits_per_pixel": 0.00636,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 6.0491,
+          "mdl_excess_bits_per_pixel": 5.00199,
+          "raw_image_zlib_bits_per_pixel": 1.0439,
+          "residual_int16_zlib_bits_per_pixel": 1.3242,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.646
+      },
+      "metadata": {
+        "pair_folder": "83",
+        "page_index": 0,
+        "title_source": "083. Ne întoarcem privirea_scanat.pdf",
+        "category": "coral_standard",
+        "scan_pdf_sha256": "50ece4b03c80cc5f6ef3431584eb17fbd510c23ec25f1f97924942d40af9c2cb",
+        "bun_pdf_sha256": "497d24e0790ebe327ee1d243f4718dab70d7a148040cda675dc96a25b8429ca8",
+        "measured_scan_spacing_px": 17.125,
+        "scan_staffs_detected_n": 8
+      },
+      "measured_scan_spacing_px": 17.125,
+      "residual_size_kb": 910.61,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_088_p0",
+      "sha256": "e14a2410eb7bf608777cad9a26bbda66351a0d2d22b9b492f1715f87ade63359",
+      "page_dimensions_px": [
+        1935,
+        2834
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 10,
+        "notes_n": 191,
+        "spacing_px": 17.25
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 4,
+        "notes_detected_n": 45,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 9.13
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 10,
+        "systems_detected_n": 5,
+        "notes_detected_n": 81,
+        "accidentals_detected_n": 1,
+        "beams_detected_n": 0,
+        "dots_detected_n": 11,
+        "chords_detected_n": 3,
+        "notehead_precision": 0.0123,
+        "notehead_recall": 0.0052,
+        "notehead_f1": 0.0074,
+        "matched_pitch_accuracy": 1.0,
+        "mean_center_error_sp": 0.5797,
+        "p95_center_error_sp": 0.5797,
+        "did_scalar": 7.8695,
+        "did_vector": {
+          "mean_position_error_sp": 0.5797,
+          "mask_iou": 0.0525,
+          "one_minus_iou": 0.9475,
+          "layout_emd_sp": 4.7984,
+          "anchored_ser": 0.9926,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.23179,
+          "mdl_excess_bits_per_pixel": 5.48175,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 5483790,
+          "n_primitives": 714,
+          "n_relations": 793,
+          "parametric_bits_total": 66082.0,
+          "parametric_bits_per_pixel": 0.01205,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 6.5288,
+          "mdl_excess_bits_per_pixel": 5.48175,
+          "raw_image_zlib_bits_per_pixel": 1.3564,
+          "residual_int16_zlib_bits_per_pixel": 1.736,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.7698
+      },
+      "metadata": {
+        "pair_folder": "88",
+        "page_index": 0,
+        "title_source": "088. Eu și casa mea_scanat.pdf",
+        "category": "coral_lyrics_dense",
+        "scan_pdf_sha256": "05add60eaa2854346143e1298c396a7c33c928f9931b2f2e31f6a21c43b9a18e",
+        "bun_pdf_sha256": "5b3a18caf2c561f1f3df2ab41a84563f03dca957705623cf7a1561e242b181d0",
+        "measured_scan_spacing_px": 15.625,
+        "scan_staffs_detected_n": 10
+      },
+      "measured_scan_spacing_px": 15.625,
+      "residual_size_kb": 1192.19,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_090_p0",
+      "sha256": "2b139d72aa7c71bd627f6458e38a015b8a54823b64d57baf34e69c4524c7cb53",
+      "page_dimensions_px": [
+        2287,
+        3455
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 6,
+        "notes_n": 141,
+        "spacing_px": 22.25
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 2,
+        "notes_detected_n": 30,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 9.575
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 7,
+        "systems_detected_n": 7,
+        "notes_detected_n": 90,
+        "accidentals_detected_n": 1,
+        "beams_detected_n": 2,
+        "dots_detected_n": 10,
+        "chords_detected_n": 14,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.5,
+        "p95_center_error_sp": 0.8,
+        "did_scalar": 7.933,
+        "did_vector": {
+          "mean_position_error_sp": 0.25,
+          "mask_iou": 0.024,
+          "one_minus_iou": 0.976,
+          "layout_emd_sp": 8.9389,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.18764,
+          "mdl_excess_bits_per_pixel": 4.8579,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 7901585,
+          "n_primitives": 339,
+          "n_relations": 445,
+          "parametric_bits_total": 33355.0,
+          "parametric_bits_per_pixel": 0.004221,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 5.905,
+          "mdl_excess_bits_per_pixel": 4.8579,
+          "raw_image_zlib_bits_per_pixel": 1.1232,
+          "residual_int16_zlib_bits_per_pixel": 1.4366,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.8592
+      },
+      "metadata": {
+        "pair_folder": "90",
+        "page_index": 0,
+        "title_source": "090. Pune Doamne dragoste-ntre frați_scanat.pdf",
+        "category": "large_engraving_print",
+        "scan_pdf_sha256": "01530e05b756d4c40fbf121009d9038a871e24a52cf22f358869bb282855c9c1",
+        "bun_pdf_sha256": "d7088cdbadf983b37d6a3039eff7bc890c6f67e31dc44690aabd244e19321ae6",
+        "measured_scan_spacing_px": 21.25,
+        "scan_staffs_detected_n": 7
+      },
+      "measured_scan_spacing_px": 21.25,
+      "residual_size_kb": 1334.79,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_097_p0",
+      "sha256": "8b6c1166692298a012b811d48b5c85c9d1fd08ab3bf99cc8a895b4b4d3fe4ce5",
+      "page_dimensions_px": [
+        2326,
+        3587
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 11,
+        "notes_n": 237,
+        "spacing_px": 20.5
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 0,
+        "notes_detected_n": 0,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 21.6054
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 9,
+        "systems_detected_n": 9,
+        "notes_detected_n": 223,
+        "accidentals_detected_n": 6,
+        "beams_detected_n": 0,
+        "dots_detected_n": 60,
+        "chords_detected_n": 52,
+        "notehead_precision": 0.0359,
+        "notehead_recall": 0.0338,
+        "notehead_f1": 0.0348,
+        "matched_pitch_accuracy": 0.375,
+        "mean_center_error_sp": 0.5057,
+        "p95_center_error_sp": 0.6383,
+        "did_scalar": 6.7909,
+        "did_vector": {
+          "mean_position_error_sp": 0.5057,
+          "mask_iou": 0.0218,
+          "one_minus_iou": 0.9782,
+          "layout_emd_sp": 6.0271,
+          "anchored_ser": 0.987,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.11471,
+          "mdl_excess_bits_per_pixel": 3.93519,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 8343362,
+          "n_primitives": 496,
+          "n_relations": 767,
+          "parametric_bits_total": 51288.0,
+          "parametric_bits_per_pixel": 0.006147,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 4.9823,
+          "mdl_excess_bits_per_pixel": 3.93519,
+          "raw_image_zlib_bits_per_pixel": 2.5857,
+          "residual_int16_zlib_bits_per_pixel": 3.1556,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 1.0406
+      },
+      "metadata": {
+        "pair_folder": "97",
+        "page_index": 0,
+        "title_source": "097. Glorificați pe Dumnezeu_scanat.pdf",
+        "category": "faint_grey_scan_lyrics",
+        "scan_pdf_sha256": "20f31482adc7c6048a6ead59ff163906985c7da83c2a44db435e896ca2b16a46",
+        "bun_pdf_sha256": "f4a61768a0e6e6804ea55d45b6f04a89186030947baf7a876f33a7ba33afd48b",
+        "measured_scan_spacing_px": 18.75,
+        "scan_staffs_detected_n": 9
+      },
+      "measured_scan_spacing_px": 18.75,
+      "residual_size_kb": 3555.89,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 0.8182
+    },
+    {
+      "pair_id": "pair_104_p1",
+      "sha256": "9a6f10861aedb51c64efaa83f6590df4d772d8b7c3cb42fdd83353117e029907",
+      "page_dimensions_px": [
+        2104,
+        3057
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 8,
+        "notes_n": 70,
+        "spacing_px": 16.125
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 7,
+        "notes_detected_n": 41,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 7.2618
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 8,
+        "systems_detected_n": 4,
+        "notes_detected_n": 75,
+        "accidentals_detected_n": 2,
+        "beams_detected_n": 2,
+        "dots_detected_n": 0,
+        "chords_detected_n": 6,
+        "notehead_precision": 0.0133,
+        "notehead_recall": 0.0143,
+        "notehead_f1": 0.0138,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.5299,
+        "p95_center_error_sp": 0.5299,
+        "did_scalar": 8.7487,
+        "did_vector": {
+          "mean_position_error_sp": 0.5299,
+          "mask_iou": 0.0203,
+          "one_minus_iou": 0.9797,
+          "layout_emd_sp": 11.0514,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.18082,
+          "mdl_excess_bits_per_pixel": 4.77427,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 6431928,
+          "n_primitives": 291,
+          "n_relations": 375,
+          "parametric_bits_total": 28555.0,
+          "parametric_bits_per_pixel": 0.00444,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 5.8214,
+          "mdl_excess_bits_per_pixel": 4.77427,
+          "raw_image_zlib_bits_per_pixel": 1.0001,
+          "residual_int16_zlib_bits_per_pixel": 1.2795,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.6874
+      },
+      "metadata": {
+        "pair_folder": "104",
+        "page_index": 1,
+        "title_source": "104. Fără hotar m-a iubit_scanat.pdf",
+        "category": "coral_contemporary_ro",
+        "scan_pdf_sha256": "ac1b5937b5089784af05d9bcc5cacce4c9f7da9924e9f16bc0c0d4b5d66df241",
+        "bun_pdf_sha256": "542f0d4ef573c5c38c3c3c2c88a24a3ac36c34f842238ed4a8005c672718011d",
+        "measured_scan_spacing_px": 16.25,
+        "scan_staffs_detected_n": 8
+      },
+      "measured_scan_spacing_px": 16.25,
+      "residual_size_kb": 1061.12,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_105_p0",
+      "sha256": "4f6210b24176a36b6083b9921b9dd20ff0e0531bc4c9f042014cab4d732c29d4",
+      "page_dimensions_px": [
+        2116,
+        3110
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 5,
+        "notes_n": 87,
+        "spacing_px": 20.0
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 1,
+        "notes_detected_n": 4,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 9.8332
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 5,
+        "systems_detected_n": 5,
+        "notes_detected_n": 48,
+        "accidentals_detected_n": 0,
+        "beams_detected_n": 5,
+        "dots_detected_n": 8,
+        "chords_detected_n": 4,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.5,
+        "p95_center_error_sp": 0.8,
+        "did_scalar": 6.9324,
+        "did_vector": {
+          "mean_position_error_sp": 0.25,
+          "mask_iou": 0.0398,
+          "one_minus_iou": 0.9602,
+          "layout_emd_sp": 7.049,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.14141,
+          "mdl_excess_bits_per_pixel": 4.18859,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 6580760,
+          "n_primitives": 218,
+          "n_relations": 276,
+          "parametric_bits_total": 21434.0,
+          "parametric_bits_per_pixel": 0.003257,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 5.2357,
+          "mdl_excess_bits_per_pixel": 4.18859,
+          "raw_image_zlib_bits_per_pixel": 0.6575,
+          "residual_int16_zlib_bits_per_pixel": 0.8439,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.5799
+      },
+      "metadata": {
+        "pair_folder": "105",
+        "page_index": 0,
+        "title_source": "105. Numai Dumnezeu_scanat.pdf",
+        "category": "coral_contemporary_ro",
+        "scan_pdf_sha256": "804eac0f3176a268e4b90169ffd40c4abc1b01e6cbe6583d43e794c1150fba82",
+        "bun_pdf_sha256": "f3c4ca0a557bf2832151d1e10ef28dd0f5249bf2fe115904ab25dbf34df94d42",
+        "measured_scan_spacing_px": 17.5,
+        "scan_staffs_detected_n": 5
+      },
+      "measured_scan_spacing_px": 17.5,
+      "residual_size_kb": 663.08,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_105_p3",
+      "sha256": "e8669740426b9ff62ceddcd13a8c631ddab371be930006ed33979fb5eff99ac9",
+      "page_dimensions_px": [
+        1904,
+        2712
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 8,
+        "notes_n": 153,
+        "spacing_px": 17.5
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 2,
+        "notes_detected_n": 15,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 10.8557
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 8,
+        "systems_detected_n": 8,
+        "notes_detected_n": 56,
+        "accidentals_detected_n": 2,
+        "beams_detected_n": 0,
+        "dots_detected_n": 15,
+        "chords_detected_n": 9,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.5,
+        "p95_center_error_sp": 0.8,
+        "did_scalar": 6.657,
+        "did_vector": {
+          "mean_position_error_sp": 0.25,
+          "mask_iou": 0.0331,
+          "one_minus_iou": 0.9669,
+          "layout_emd_sp": 4.4263,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.16942,
+          "mdl_excess_bits_per_pixel": 4.63388,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 5163648,
+          "n_primitives": 301,
+          "n_relations": 360,
+          "parametric_bits_total": 28845.0,
+          "parametric_bits_per_pixel": 0.005586,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 5.681,
+          "mdl_excess_bits_per_pixel": 4.63388,
+          "raw_image_zlib_bits_per_pixel": 0.9149,
+          "residual_int16_zlib_bits_per_pixel": 1.1751,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.5731
+      },
+      "metadata": {
+        "pair_folder": "105",
+        "page_index": 3,
+        "title_source": "105. Numai Dumnezeu_scanat.pdf",
+        "category": "coral_contemporary_ro",
+        "scan_pdf_sha256": "804eac0f3176a268e4b90169ffd40c4abc1b01e6cbe6583d43e794c1150fba82",
+        "bun_pdf_sha256": "f3c4ca0a557bf2832151d1e10ef28dd0f5249bf2fe115904ab25dbf34df94d42",
+        "measured_scan_spacing_px": 15.125,
+        "scan_staffs_detected_n": 8
+      },
+      "measured_scan_spacing_px": 15.125,
+      "residual_size_kb": 706.69,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_106_p0",
+      "sha256": "dbc65368f21eb6d99d3f606d20b2e2ceb363f07b30e2bae82dc1dbf55a552543",
+      "page_dimensions_px": [
+        2032,
+        3037
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 12,
+        "notes_n": 278,
+        "spacing_px": 17.5
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 1,
+        "notes_detected_n": 5,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 12.2779
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 12,
+        "systems_detected_n": 12,
+        "notes_detected_n": 46,
+        "accidentals_detected_n": 1,
+        "beams_detected_n": 1,
+        "dots_detected_n": 7,
+        "chords_detected_n": 0,
+        "notehead_precision": 0.0435,
+        "notehead_recall": 0.0072,
+        "notehead_f1": 0.0123,
+        "matched_pitch_accuracy": 0.5,
+        "mean_center_error_sp": 0.3824,
+        "p95_center_error_sp": 0.5448,
+        "did_scalar": 7.4837,
+        "did_vector": {
+          "mean_position_error_sp": 0.3824,
+          "mask_iou": 0.0549,
+          "one_minus_iou": 0.9451,
+          "layout_emd_sp": 4.3822,
+          "anchored_ser": 0.9938,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.23667,
+          "mdl_excess_bits_per_pixel": 5.42398,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 6171184,
+          "n_primitives": 457,
+          "n_relations": 492,
+          "parametric_bits_total": 42153.0,
+          "parametric_bits_per_pixel": 0.006831,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 6.4711,
+          "mdl_excess_bits_per_pixel": 5.42398,
+          "raw_image_zlib_bits_per_pixel": 1.3542,
+          "residual_int16_zlib_bits_per_pixel": 1.7547,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.7646
+      },
+      "metadata": {
+        "pair_folder": "106",
+        "page_index": 0,
+        "title_source": "106. Este un Nume_scanat.pdf",
+        "category": "coral_lyrics_dense",
+        "scan_pdf_sha256": "21ab6f8c78519523fd758e65ddd5d11a39147c7d6676533c90341ef7ac5bbba7",
+        "bun_pdf_sha256": "3858eae4d4e412d9f1788f6a2b9971d0c2649c3919b90cb0b5fed62181f7fa3c",
+        "measured_scan_spacing_px": 15.625,
+        "scan_staffs_detected_n": 12
+      },
+      "measured_scan_spacing_px": 15.625,
+      "residual_size_kb": 1271.34,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_106_p1",
+      "sha256": "f50d086d2ff714da88e4ad288902ee5ffe5e1c69fd34fd3fdb8e7ededd3bc4ee",
+      "page_dimensions_px": [
+        2046,
+        3013
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 10,
+        "notes_n": 256,
+        "spacing_px": 17.25
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 5,
+        "notes_detected_n": 52,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 7.9449
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 10,
+        "systems_detected_n": 10,
+        "notes_detected_n": 78,
+        "accidentals_detected_n": 2,
+        "beams_detected_n": 1,
+        "dots_detected_n": 7,
+        "chords_detected_n": 11,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.5,
+        "p95_center_error_sp": 0.8,
+        "did_scalar": 7.1593,
+        "did_vector": {
+          "mean_position_error_sp": 0.25,
+          "mask_iou": 0.0647,
+          "one_minus_iou": 0.9353,
+          "layout_emd_sp": 4.3768,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.22279,
+          "mdl_excess_bits_per_pixel": 5.24605,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 6164598,
+          "n_primitives": 447,
+          "n_relations": 527,
+          "parametric_bits_total": 42343.0,
+          "parametric_bits_per_pixel": 0.006869,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 6.2931,
+          "mdl_excess_bits_per_pixel": 5.24605,
+          "raw_image_zlib_bits_per_pixel": 1.1755,
+          "residual_int16_zlib_bits_per_pixel": 1.5106,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.7711
+      },
+      "metadata": {
+        "pair_folder": "106",
+        "page_index": 1,
+        "title_source": "106. Este un Nume_scanat.pdf",
+        "category": "coral_lyrics_dense",
+        "scan_pdf_sha256": "21ab6f8c78519523fd758e65ddd5d11a39147c7d6676533c90341ef7ac5bbba7",
+        "bun_pdf_sha256": "3858eae4d4e412d9f1788f6a2b9971d0c2649c3919b90cb0b5fed62181f7fa3c",
+        "measured_scan_spacing_px": 15.875,
+        "scan_staffs_detected_n": 10
+      },
+      "measured_scan_spacing_px": 15.875,
+      "residual_size_kb": 1220.95,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_111_p1",
+      "sha256": "e4eef4e22dfba585a555ec7fc859a756c91248f5aa3bc79139acb80e486db7af",
+      "page_dimensions_px": [
+        1853,
+        2624
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 10,
+        "notes_n": 254,
+        "spacing_px": 16.875
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 2,
+        "notes_detected_n": 17,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 8.6504
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 10,
+        "systems_detected_n": 5,
+        "notes_detected_n": 111,
+        "accidentals_detected_n": 0,
+        "beams_detected_n": 1,
+        "dots_detected_n": 33,
+        "chords_detected_n": 28,
+        "notehead_precision": 0.1351,
+        "notehead_recall": 0.0591,
+        "notehead_f1": 0.0822,
+        "matched_pitch_accuracy": 0.2667,
+        "mean_center_error_sp": 0.3993,
+        "p95_center_error_sp": 0.6004,
+        "did_scalar": 6.7759,
+        "did_vector": {
+          "mean_position_error_sp": 0.3993,
+          "mask_iou": 0.067,
+          "one_minus_iou": 0.933,
+          "layout_emd_sp": 4.8003,
+          "anchored_ser": 0.9781,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.15091,
+          "mdl_excess_bits_per_pixel": 4.51025,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 4862272,
+          "n_primitives": 352,
+          "n_relations": 484,
+          "parametric_bits_total": 35136.0,
+          "parametric_bits_per_pixel": 0.007226,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 5.5573,
+          "mdl_excess_bits_per_pixel": 4.51025,
+          "raw_image_zlib_bits_per_pixel": 1.2434,
+          "residual_int16_zlib_bits_per_pixel": 1.6182,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.8086
+      },
+      "metadata": {
+        "pair_folder": "111",
+        "page_index": 1,
+        "title_source": "111. Familia_scanat.pdf",
+        "category": "coral_standard",
+        "scan_pdf_sha256": "2b78baa5b13600b9ad5f165cca447a54b9a1ff17c1ec01fd247cc0e78ebb94d1",
+        "bun_pdf_sha256": "c8e3f286f1d56ce17a895f94b1bd1f5f7a7bbf457e849aba409e02d0883a51b0",
+        "measured_scan_spacing_px": 15.5,
+        "scan_staffs_detected_n": 10
+      },
+      "measured_scan_spacing_px": 15.5,
+      "residual_size_kb": 959.74,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    },
+    {
+      "pair_id": "pair_111_p2",
+      "sha256": "b10dc6a6881f215e302527d325262c90e713ecfc8ac12558e32ab5bb65073efe",
+      "page_dimensions_px": [
+        1784,
+        2562
+      ],
+      "ransac_alignment_inliers": 0,
+      "reference_digital": {
+        "staffs_n": 10,
+        "notes_n": 336,
+        "spacing_px": 16.5
+      },
+      "baseline_v0_1": {
+        "staffs_detected_n": 0,
+        "notes_detected_n": 0,
+        "notehead_precision": 0.0,
+        "notehead_recall": 0.0,
+        "notehead_f1": 0.0,
+        "mean_center_error_sp": 0.5,
+        "did_scalar": 20.4343
+      },
+      "idsr_v0_2": {
+        "staffs_detected_n": 10,
+        "systems_detected_n": 5,
+        "notes_detected_n": 185,
+        "accidentals_detected_n": 1,
+        "beams_detected_n": 0,
+        "dots_detected_n": 90,
+        "chords_detected_n": 54,
+        "notehead_precision": 0.1568,
+        "notehead_recall": 0.0863,
+        "notehead_f1": 0.1113,
+        "matched_pitch_accuracy": 0.0,
+        "mean_center_error_sp": 0.3956,
+        "p95_center_error_sp": 0.5974,
+        "did_scalar": 6.9396,
+        "did_vector": {
+          "mean_position_error_sp": 0.3956,
+          "mask_iou": 0.0449,
+          "one_minus_iou": 0.9551,
+          "layout_emd_sp": 3.7717,
+          "anchored_ser": 1.0,
+          "relation_f1": 0.5,
+          "photometric_excess": 0.19169,
+          "mdl_excess_bits_per_pixel": 4.93589,
+          "calibration_ece": 0.0,
+          "calibration_brier": 0.0
+        },
+        "mdl_decomposition": {
+          "n_pixels": 4570608,
+          "n_primitives": 433,
+          "n_relations": 664,
+          "parametric_bits_total": 44721.0,
+          "parametric_bits_per_pixel": 0.009784,
+          "oracle_noise_bits_per_pixel": 1.0471,
+          "model_total_bits_per_pixel": 5.983,
+          "mdl_excess_bits_per_pixel": 4.93589,
+          "raw_image_zlib_bits_per_pixel": 1.2558,
+          "residual_int16_zlib_bits_per_pixel": 1.6247,
+          "float64_max_reconstruction_error": 0.0,
+          "float64_identity_within_machine_eps": true,
+          "uint8_exact_reconstruction": true
+        },
+        "runtime_seconds": 0.7881
+      },
+      "metadata": {
+        "pair_folder": "111",
+        "page_index": 2,
+        "title_source": "111. Familia_scanat.pdf",
+        "category": "coral_standard",
+        "scan_pdf_sha256": "2b78baa5b13600b9ad5f165cca447a54b9a1ff17c1ec01fd247cc0e78ebb94d1",
+        "bun_pdf_sha256": "c8e3f286f1d56ce17a895f94b1bd1f5f7a7bbf457e849aba409e02d0883a51b0",
+        "measured_scan_spacing_px": 15.25,
+        "scan_staffs_detected_n": 10
+      },
+      "measured_scan_spacing_px": 15.25,
+      "residual_size_kb": 929.5,
+      "uint8_pixel_diff": 0,
+      "uint8_max_abs_error": 0,
+      "staff_detection_rate": 1.0
+    }
+  ]
+}

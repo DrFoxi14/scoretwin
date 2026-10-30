@@ -13,9 +13,12 @@ from .benchmark import evaluate_perspective_capture, evaluate_synthetic
 from .benchmark_manifest import evaluate_manifest
 from .benchmark_photo_smoke import evaluate_photo_smoke
 from .gltf_export import validate_embedded_gltf
+from .idsr_engine import edit_note_preserving_identity
 from .imaging import load_grayscale, rectify_global_skew, rectify_page_quadrilateral
-from .pipeline import process_file
+from .pipeline import analyze_array, process_file
 from .proposal import save_model, train_proposal_model
+from .reasoning import run_vatican_reasoning_test
+from .registered_eval import run_all_idsr_experiments
 from .synthetic import generate_synthetic_page
 
 
@@ -107,6 +110,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate_gltf = commands.add_parser("validate-gltf", help="Validate a self-contained glTF 2.0 scene")
     validate_gltf.add_argument("input", type=Path, help="Path to a ScoreTwin .gltf JSON file")
+
+    eval_idsr = commands.add_parser(
+        "evaluate-idsr",
+        help="Run the complete reproducible IDSR experimental suite (Phases -1, 0, 3, 3.5, 8)",
+    )
+    eval_idsr.add_argument(
+        "--out",
+        type=Path,
+        default=Path("results/idsr-phase8-experiments-2026-10-29.json"),
+    )
+
+    edit_cmd = commands.add_parser(
+        "edit-note",
+        help="Edit a single note's pitch while preserving outside-ROI pixels bit-for-bit",
+    )
+    edit_cmd.add_argument("input", type=Path)
+    edit_cmd.add_argument("--note-id", default=None)
+    edit_cmd.add_argument("--new-step", type=int, default=4)
+    edit_cmd.add_argument("--out", type=Path, default=Path("edited-score.png"))
+
+    vatican_cmd = commands.add_parser(
+        "vatican-test",
+        help="Run zero-shot ScoreTwin-Reasoning with decolorize_and_investigate on 14th-century manuscript",
+    )
+    vatican_cmd.add_argument("--seed", type=int, default=1340)
+    vatican_cmd.add_argument("--modern-layer3", action="store_true", default=True)
+    vatican_cmd.add_argument(
+        "--out",
+        type=Path,
+        default=Path("results/vatican-test-xiv-2026-10-30.json"),
+    )
 
     serve = commands.add_parser("serve", help="Run the local browser interface")
     serve.add_argument("--host", default="127.0.0.1")
@@ -263,6 +297,47 @@ def main() -> None:
     elif args.command == "validate-gltf":
         report = validate_embedded_gltf(args.input.read_text(encoding="utf-8"))
         print(json.dumps({"input": str(args.input), **report}, indent=2, ensure_ascii=False))
+    elif args.command == "evaluate-idsr":
+        report = run_all_idsr_experiments(output_json_path=args.out)
+        print(json.dumps({
+            "report_path": str(args.out),
+            "reproducibility": report["reproducibility"],
+            "real_pairs_mean_did_v0_1": report["faza_8_real_registered_pairs"]["baseline_v0_1_mean_did"],
+            "real_pairs_mean_did_v0_2": report["faza_8_real_registered_pairs"]["idsr_v0_2_mean_did"],
+            "real_pairs_staff_recall_v0_2": report["faza_8_real_registered_pairs"]["idsr_v0_2_staff_recall"],
+        }, indent=2, ensure_ascii=False))
+    elif args.command == "edit-note":
+        gray = load_grayscale(args.input)
+        scene = analyze_array(gray, adaptive_staffs=True)
+        if not scene["notes"]:
+            raise ValueError("No notes detected in input image.")
+        target_id = args.note_id or scene["notes"][0]["id"]
+        edit_res = edit_note_preserving_identity(
+            gray, scene, note_id=target_id, new_diatonic_step=args.new_step
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(args.out), edit_res["edited_image"])
+        print(json.dumps({
+            "edited_image_path": str(args.out),
+            "note_id": target_id,
+            "outside_roi_bit_identical": edit_res["outside_roi_bit_identical"],
+            "unchanged_pixel_fraction": edit_res["unchanged_pixel_fraction"],
+            "modified_pixel_count": edit_res["modified_pixel_count"],
+        }, indent=2, ensure_ascii=False))
+    elif args.command == "vatican-test":
+        report = run_vatican_reasoning_test(
+            seed=args.seed,
+            request_optional_modern_layer3=bool(args.modern_layer3),
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(json.dumps({
+            "report_path": str(args.out),
+            "page_sha256": report["page_sha256"],
+            "abstained_or_unknown_count": report["abstained_or_unknown_count"],
+            "layer1_physical_twin": report["layer1_physical_twin"],
+            "note_at_1_30_cm_verification": report["layer1_structural_map"]["note_at_1_30_cm_verification"],
+        }, indent=2, ensure_ascii=False))
     elif args.command == "serve":
         import uvicorn
         uvicorn.run("scoretwin.web:app", host=args.host, port=args.port, reload=False)

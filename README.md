@@ -1,190 +1,86 @@
-# ScoreTwin / IDSR
+# IDSR — Identic Digital Score Reconstruction
 
-ScoreTwin is the active implementation workspace for Identity-preserving Digital Score Reconstruction (IDSR).
+## Ce vreau
 
-## Current vertical slice
+Reproduce digital identic o partitură la care i-am făcut poză. Atât. Nu „aproximativ". Nu „cu erori marcate". Identic. Să pot roti notele, să le văd „de sub". Să fie o replică digitală a PDF-ului sau a pozei pe care i-am dat-o, nu o transcriere care arată altfel.
 
-This repository contains a runnable research prototype:
+## Ce NU vreau
 
-- image and PDF ingestion;
-- five-line staff detection with a global-skew warning (rotation/perspective rectification is not yet applied);
-- notehead proposals that attempt to reconstruct fragments cut by staff lines, followed by a bounded local template-fit refinement;
-- a small synthetic patch classifier, trainable locally;
-- a provenance-aware geometry graph (staff systems, staff lines, barlines, notehead proposals, unknown regions and typed relations) with pixel coordinates and uncertainty flags;
-- a source-aligned 2D editor for dragging notehead proposals, a separate structural 2D render of known primitives, and an interactive semantic-layer view in 3D;
-- editable pitch proposals, downloadable scene JSON and provisional MusicXML export, with uncertain durations and score structure marked for review;
-- MusicXML serialization for explicitly annotated chord groups, voices, accidentals and repeated systems; those fields remain unrecognized from pixels;
-- a local browser UI, CLI, synthetic-page generator and synthetic regression benchmark;
-- tests and a GitHub Actions workflow.
+OMR. Nu fac OMR. OMR-ul e o paradigmă veche care presupune că trebuie să ghicești simboluri dintr-un vocabular finit și să cârpești erori cu euristici care niciodată nu dau identic pur. Eu nu asta fac. Eu fac **IDSR — Identic Digital Score Reconstruction**: replicare identică digitală, cu AI care nu are reguli fixe, cu reguli neuronale, cu un sistem care știe singur ce să facă atunci când apare ceva nou.
 
-This is not yet a validated general-purpose OMR engine. The current proposal model is trained only on synthetic crops. Stem detection is a morphology-plus-proximity heuristic; duration hypotheses from filled/hollow heads and stem presence remain explicitly uncalibrated and are not used to silently change exported MusicXML durations. Beams, flags and rhythm are not yet decoded. Pitch proposals assume treble clef and a C-major/no-accidental interpretation. Duration, voice, accidentals, staff-to-part mapping and ambiguous overlaps are not reliably inferred. The MusicXML exporter marks these assumptions rather than claiming a correct transcription. Stacked noteheads with nearly aligned x-coordinates can be emitted as provisional chord hypotheses, and those relations are marked for review.
+## De ce nu accept „nu se poate"
 
-## Run locally
+Am auzit de prea multe ori „s-a încercat 30 de ani și nimeni n-a reușit". Nu mă interesează. Eu o să fac să se poată. Fiecare „nu se poate" e o presupunere pe care nu ai verificat-o. Fiecare „s-a încercat" e o încercare pe altă distribuție, cu altă metrică, sub altă presupunere. Arată-mi presupunerea și o atac.
 
-Python 3.11 or newer is required.
+## Vatican nu o să zică „am plătit pentru identic" și tu acum ne ceri ca copiștii să corecteze o măsură după care totul se corectează
 
-    python -m venv .venv
-    source .venv/bin/activate
-    pip install -e ".[test]"
-    pytest
+Asta e cel mai important lucru din tot proiectul. Nu pot să vin la Vatican cu un contract care zice „identic" și apoi să le cer copiștilor lor să eticheteze măsuri ca să învețe AI-ul meu. Nu. Sistemul funcționează din prima, pe pagina pe care nu a văzut-o niciodată, fără să cer nimănui nimic. Fără corectori. Fără antrenare de la client. Fără „mai întâi învățați-l voi".
 
-Create and analyze a synthetic example (a useful first smoke test):
+Dacă sistemul are nevoie de etichetare ca să funcționeze, atunci nu e identic — e un demo. Identicul se vede din prima.
 
-    scoretwin demo --out ./scoretwin-demo
+Și dacă cineva de la Vatican mă întreabă la primul meeting: *„Dar ce face sistemul tău dacă dă peste un glif sau o pată pe care nu o știe?"* — răspunsul meu e scurt: **Sistemul meu nu are opțiunea „nu știu" sau „mă abțin". Dacă urma e pe foaie, intră în adâncime în fizica ei, o decolorează strat cu strat, o mărește până la fibră, îi extrage geometria exactă, o verifică în contextul întregii pagini și îți arată exact ce este fizic acolo și de ce.**
 
-Evaluate notehead proposals on generated pages, with exact synthetic notehead-center ground truth:
+## Cum cred eu că se rezolvă
 
-    scoretwin evaluate-synthetic --pages 100 --seed 20261029 --noise-sigma 2 --blur-sigma 0.35 --contract-staff-spaces 0.3 --out ./results/synthetic-capture-pilot-2026-10-29.json
+Un model care gândește, ca Qwen dar pentru muzică. Să prezică, să deducă, să înțeleagă contextul. Nu un clasificator care zice „clasa 7, încredere 0.83". Un sistem care zice „văd 4 linii, nu 5, formele sunt pătrate, distribuția sugerează secol XIV, deci nu e notație modernă — asta schimbă ce înseamnă fiecare glif". Care știe singur ce să facă atunci când apare ceva nou, fără să întrebe pe nimeni.
 
-Compare a clean synthetic source page, its projective camera simulation, and correction using exact page corners:
+Nu antrenez pe toate datele de pe planetă. Maxim ce se poate e să învețe toate simbolurile din MusicXML. Dar nu asta e ținta. Ținta e un sistem care **gândește** despre notație, nu unul care memorează glife. Gândirea generalizează la ce nu a văzut. Memorarea nu.
 
-    scoretwin evaluate-perspective --pages 100 --seed 20261029 --noise-sigma 2 --blur-sigma 0.35 --contract-staff-spaces 0.3 --out ./results/perspective-capture-pilot-2026-10-29.json
+## Ce înseamnă „identic" pentru mine
 
-Evaluate a separately annotated manifest (the command does not manufacture ground truth):
+Nu 99%. Nu „cu erori marcate". Identic. Fiecare pixel. Fiecare strat. Fiecare adâncime. Să pot roti, să pot desface, să pot vedea notele de dedesubt. Să pot edita o notă fără ca restul paginii să se miște cu un micron. Să am geamănul digital al foii mele de hârtie, nu o interpretare a ei.
 
-    scoretwin evaluate-manifest --manifest ./data/manifest.json --out ./results/real-evaluation.json
+### Nu există „nu știe". Există „nu a măsurat încă la nivelul potrivit".
 
-Train the small proposal model on generated synthetic crops:
+Dacă informația e pe foaie, poate fi replicată identic. Punct. Nu e o promisiune, e fizică.
 
-    scoretwin train-model --out ./models/proposal.npz --samples-per-class 600 --epochs 50
+Uite cum gândesc eu: o notă decolorată până la atomi — tot a lăsat ceva. Cerneala ferogalică lasă fier în fibrele hârtiei. Creionul lasă grafit. Cerneala de carbon lasă carbon. Chiar dacă nu se mai vede cu ochiul liber în RGB, există un relief, există o urmă chimică, există o absorbanță diferențiată la o altă lungime de undă. Dacă te uiți cu senzorul potrivit, **urma e acolo**. Nu a dispărut, doar ai încetat să o vezi.
 
-Analyze one image:
+Deci ce faci când dai de o pată ambiguă? Nu zici „nu știu ce e" și nu te abții. Faci lanțul ăsta:
 
-    scoretwin analyze ./score.png --out ./runs/score
+1. **Decolorează până la atomi** — adică mergi în adâncime: multi-spectral (IR, UV, fluorescență), absorbanță optică, relief (profilometrie, photometric stereo), chimic dacă e nevoie. Nu te opri la RGB.
+2. **Uite, după decolorare, undeva totuși e o pată de culoare care iese în relief.** Unde e? Cât de mare? Ce formă are?
+3. **Rămâne marcată.** Bine. Acum întreabă: **e posibil să fie notă? Sau poate e punct?**
+4. **Dar pentru cine să fie punct?** Adică — are sens contextual? E aproape de o notă? E la înălțimea unde un punct de augmentare ar avea sens? Sau e izolat, fără nicio notă în jur?
+5. **Hai să mărim să vedem forma ei exactă.** Nu la 4 pixeli, ci la 40. Nu la 400, ci la 4000. Forma la rezoluția maximă a senzorului.
+6. **A, deci e doar punct.** Bine. **Era ceva notă care logic să fie punct?** Dacă da, e punct de augmentare. Dacă nu, e reziduu fizic. Marcat ca atare, păstrat vizual la locul lui, exclus din interpretare — dar **nu șters**.
 
-Validate the emitted 3D scene independently:
+Unde mă opresc? Nu la „nu știu". Mă opresc când **fizic nu mai există informație de recuperat** — adică atunci când urma a fost distrusă ireversibil (arsă, chimic neutralizată complet, zgâriată până la suport). Atunci e pierdere fizică, nu epistemologică. Și se raportează ca atare: „aici a existat ceva, fizic nu mai există, iată dovada că a existat (relief, urmă chimică, fibră ruptă), nu pot recupera forma".
 
-    scoretwin validate-gltf ./runs/score/scene.gltf
+Asta e diferit fundamental de „abțin". Abținerea e o alegere leneșă. Pierderea fizică e un fapt al materiei. Nu le confunda.
 
-Analyze a PDF page (zero-indexed page number):
+### Poziția exactă. Nu o „îmbunătăți".
 
-    scoretwin analyze ./score.pdf --page 0 --out ./runs/score
+Dacă în realitate pe foaia A4 nota e la **1,3 cm de bară**, atunci sistemul o pune la **1,3 cm**. Nu la 0,7 cm pentru că „așa e mai standard" sau „așa e mai cool" sau „așa e mai corect muzical". Nu.
 
-Create an optional global-rotation preview with a reversible transform back to source coordinates:
+**Nu standardizez. Nu normalizez. Nu îmbunătățesc. Replic.**
 
-    scoretwin rectify-preview ./score.jpg --out ./runs/rectification
+Dacă omul care descifrează partitura vrea să vadă cum ar arăta „corect din punct de vedere muzical modern" — cu poziții standardizate, cu spacing uniform, cu layout MuseScore — atunci selectează un mod separat, explicit: **„vizualizare interpretare modernă"**. Dar asta e o **proiecție opțională**, nu output-ul default. Default-ul e: foaia ta, exact cum e, la 1,3 cm.
 
-The bundle stores a byte-identical source copy, a resampled preview, and both coordinate transforms. This is a capture diagnostic; the default OMR analysis still runs on the source raster. It handles one global rotation only, not perspective, page curl, or local deformation.
+Asta e diferența dintre „digitalizare" și „reescriere". Digitalizarea păstrează. Reescrierea pierde. Noi digitalizăm, nu rescriem.
 
-For a perspective photo, manually select the page corners in top-left, top-right, bottom-right, bottom-left order, then pass those source-raster pixel coordinates as JSON:
+Și mai e ceva: când omul alege „interpretare modernă", sistemul trebuie să arate **ce a schimbat**. Nu să ascundă. „Am mutat nota de la 1,3 la 0,7 cm; am schimbat durata de la X la Y; iată cele 12 diferențe între original și interpretare." Ca să poți compara, nu să accepți pe nevăzute.
 
-    scoretwin rectify-preview ./score.jpg --corners-json '[[42,31],[1420,77],[1375,1980],[18,1902]]' --out ./runs/page-rectification
-    scoretwin analyze ./score.jpg --corners-json '[[42,31],[1420,77],[1375,1980],[18,1902]]' --out ./runs/score-rectified
+### Ce înseamnă „știe singur ce să facă"
 
-The transform maps those four points to a rectangle and records the forward and inverse homographies. It assumes the page is planar and the corners are correct; it does not automatically detect the page or flatten curvature, folds, or local warping. The source file remains byte-identical in the analysis bundle.
+Nu „ghicește ce vrea utilizatorul". Ci: **când apare ceva nou, îl investighează până la capăt înainte să raporteze ceva**. Nu sare la „nu știu". Nu sare la „probabil e X". Face lanțul: măsoară mai adânc → caracterizează mai precis → verifică contextual → decide cu argumente → arată exact ce a recuperat fizic vs. ce a fost distrus fizic.
 
-To opt in to analyzing the rectified raster while retaining source coordinates in the scene metadata:
+Asta e ce vreau de la „Qwen pentru muzică". Nu un model care răspunde din burtă și nici unul care se abține. Un model care **investighează** înainte să răspundă. Care știe că informația e pe foaie și nu se oprește până nu a epuizat posibilitățile fizice de a o recupera.
 
-    scoretwin analyze ./score.jpg --rectify-skew --out ./runs/score-rectified
+## Ce e garantat, ce nu
 
-The overlay and structural render use the analysis raster; `source-original.*` remains byte-identical, and `scene.json` plus `capture-transform.json` include mappings back to rasterized source coordinates.
+Nu vând „abținem onest pe ce nu înțelegem". Vând: **recuperăm fizic tot ce există pe foaie, replicăm identic la poziția exactă, interpretăm argumentat prin investigație completă, standardizăm doar la cerere, și arătăm mereu diferența.**
 
-Run the browser app:
+1. **Stratul 1 — Geamănul digital fizic și harta structurală sunt garantate 100% pe orice input.** Recuperare la rezoluția maximă a senzorului, adâncime optică, multi-spectral, relief. Identitate pixel-cu-pixel și strat-cu-strat. Fiecare pată segmentată, măsurată la poziția ei fizică exactă (1,3 cm rămâne 1,3 cm), cu relațiile ei, fără vocabular predefinit și fără nicio normalizare.
+2. **Stratul 2 — Interpretarea semantică argumentată prin investigație.** Fiecare element este trecut prin lanțul de investigație fizică și contextuală (`decolorize_and_investigate`), cu argumente și trace complet. Unde sensul muzical depinde de o urmă sub rezoluția senzorului curent, rămâne marcat ca „recuperat fizic la nivelul curent al senzorului, iată geometria și ipotezele contextuale, iată ce senzor tranșează" — niciodată ca „nu știu / abțin". Unde suportul e ars sau distrus, se raportează pierderea fizică cu dovadă.
+3. **Stratul 3 (opțional, explicit) — Interpretarea modernă standardizată.** Doar la cererea explicită a utilizatorului. Nicio ieșire nu normalizează poziții, durate, spacing sau orice altă dimensiune geometrică fără cerere explicită și fără raport complet de diferențe față de original.
 
-    scoretwin serve --host 127.0.0.1 --port 8000
+## Pentru cine construiesc asta
 
-Then open http://127.0.0.1:8000. Uploaded files are processed by the local server process. No remote inference API is used by this prototype. On an image, **Select four page corners** enables a clockwise tap sequence from top-left through bottom-left; analysis applies the corresponding planar homography and records its inverse. This is optional and does not flatten a curled page. After edits, use **Download edited scene JSON** to keep the adjusted geometry and pitch proposals; **Regenerate MusicXML from edits** exports the current symbolic projection.
+Pentru Vatican. Pentru arhive. Pentru muzicologi. Pentru oameni care au manuscrise pe care nu le poate citi nimeni complet, dar pe care toți ar vrea să le vadă, să le atingă, să le exploreze exact așa cum au fost scrise. Pentru oameni care nu acceptă „s-a încercat și n-a mers" ca răspuns final.
 
-## Output bundle
+## Regula care ține totul împreună
 
-- source file copied byte-for-byte to the bundle and verified by SHA-256;
-- scene.json: staff geometry, a primitive graph, typed relations, continuous pitch-position offsets, source provenance, software versions, model-training metadata and warnings;
-- overlay.png: source image with staff/notehead proposals;
-- geometry-render.png: structural render of the currently modeled primitives (not a complete/pixel-identical page render);
-- analysis-raster-pixels.png: the decoded grayscale or BGR analysis raster in the coordinate frame used by geometry and texture exports;
-- residual-offset255.png: uint16 PNG encoding of the signed grayscale or per-channel BGR residual plus 255;
-- reconstructed-analysis.png: pixel-exact recomposition of the decoded analysis raster, including all retained BGR channel values for color sources;
-- identity-reconstruction.json: SHA-256 values, pixel mismatch count, maximum absolute error and the scope/limits of the exact-recomposition guarantee;
-- scene.gltf: self-contained glTF 2.0 geometry and embedded analysis-raster texture, with IDs/provenance/uncertainty/relations in per-node extras;
-- provisional.musicxml: XML output carrying explicit review markers.
+**Nicio componentă nu depinde de intervenție umană ca să funcționeze la prima vedere.** Savanții își fac meseria, AI-ul învață ca efect secundar. Niciodată invers. Niciodată „antrenați-l voi". Niciodată „etichetați mai întâi". Niciodată „corectorii noștri vor corecta măsurile".
 
-Unresolved regions include a heuristic reason such as low local contrast, low local sharpness/blur, or an unfamiliar/uncertain mark. These thresholds are not calibrated; the UI explicitly treats them as diagnostic hints, not probabilities.
-
-### Exact residual reconstruction
-
-The bundle renders the currently modeled primitives into an 8-bit grayscale image \(G\). For a grayscale input, the signed residual is \(R=I-G\) against the decoded grayscale raster \(I\). For a color input, the renderer is lifted into BGR channels and the residual is computed separately for each retained channel. Each residual channel ranges from \(-255\) to \(255\), so the stored PNG uses unsigned 16-bit values \(R_{16}=R+255\). Recomposing \(I'=G+R_{16}-255\) recovers each grayscale sample or each retained BGR channel exactly when the stored files are read back. The pipeline checks this with an array equality assertion and reports the mismatch count and maximum absolute error in \`identity-reconstruction.json\`.
-
-This is a lossless identity anchor for the **decoded analysis raster**: grayscale samples stay grayscale, and BGR channels are preserved for color images. Alpha is composited over white, 16-bit raster inputs are normalized to uint8 for analysis, and PDF pages are decoded or rendered by the configured loader; this guarantee is not byte identity with the compressed source file. The original upload is preserved separately byte-for-byte and hash-checked. The residual is not advertised as compressed; PNG compression only encodes the uint16 residual image losslessly.
-
-
-The preserved source is the lossless identity anchor. The overlay is a diagnostic layer, not a claim that all original ink has been parsed into primitives. The 3D view uses a semantic layer offset; it is not a measurement of the physical relief of ink.
-
-### glTF export semantics
-
-The generated \`scene.gltf\` embeds both its geometry buffer and an analysis-raster PNG texture, so it is one portable file with no separate \`.bin\` or image dependency. The texture is drawn on a page-sized plane behind the symbols; its UV coordinates align with the page geometry. In CLI bundles the texture uses the decoded analysis raster at its native pixel dimensions. The browser export uses the displayed analysis preview resolution, while the original uploaded file remains separately preserved byte-for-byte and verified by SHA-256. X/Y coordinates use the analysis raster's pixel frame; Y is converted to glTF's Y-up convention. Notes and linked stems receive small Z offsets for viewing semantic layers and annotated voices. Those offsets are display conventions, not measurements of physical ink depth. The exporter preserves primitive IDs, symbolic annotations, typed relations, provenance, uncertainty and source/capture hashes in glTF \`extras\`. The current mesh coverage is deliberately limited to staff lines, barlines, noteheads, attached stems and outlined unresolved regions; beams, lyrics, slurs, dynamics, clefs and physical paper/ink optics are not reconstructed yet.
-
-Use **Download current 3D scene (.gltf)** in the browser after editing to export the current geometry over the analysis-raster texture. The CLI bundle also writes \`scene.gltf\` and validates its embedded buffers, texture, vertex attributes and mesh indices before returning success.
-
-For hand-annotated scene JSON, MusicXML export accepts note fields `chord_id`, `voice`, `onset`, `duration`, `type`, `accidental`, and `pitch.alter`. Staffs can share `part_id` and specify `part_name`, `system_index`, `staff_number`, `key_fifths`, `time_signature`, and `clef`; notes can override `system_index` or set `measure_index`. `onset` and `duration` use MusicXML divisions (the current default is one division per quarter note). The exporter serializes supplied annotations, adds review-marked geometric chord hypotheses, and keeps unresolved fields flagged; it does not infer voices or accidentals.
-
-## Epistemic status
-
-- [DEMONSTRATED BY CONSTRUCTION] The original uploaded file is copied byte-for-byte and hash-checked in CLI bundles.
-- [MEASURED BY TESTS] Staff detection, staff-line-crossing notehead proposal, synthetic classifier execution, local template-fit refinement, scene-graph creation, MusicXML XML parsing and bundle generation are checked by tests.
-- [HYPOTHESIS] The synthetic patch classifier and geometric proposals will transfer to real score photographs. This must be tested on a held-out, real-page benchmark.
-- [NOT YET IMPLEMENTED] End-to-end recovery of complete symbolic-geometric scenes from arbitrary photographs, calibrated symbolic ambiguity, physically measured ink depth and validated DID/MDL metrics.
-
-## Synthetic capture pilot
-
-[MĂSURAT — synthetic only] The checked-in run evaluated 100 procedurally generated pages (1,800 ground-truth noteheads), seeds 20261029–20261128, two staffs per page, 9 notes per staff, grayscale noise σ=2 and Gaussian blur σ=0.35 px. Geometry remained registered; there was no perspective, rotation, color ISP, page curvature or real manuscript. The patch classifier used 360 synthetic training crops and 90 synthetic holdout crops.
-
-[MĂSURAT — synthetic only] After local template-fit refinement, matching at 0.3 staff spaces produced 1,790 true positives, 2 false positives and 10 false negatives: micro precision 0.9989, recall 0.9944 and F1 0.9967. Macro page F1 was 0.9966 (page-bootstrap 95% CI 0.9939–0.9988). Mean page p95 localization error was 0.0778 staff spaces (95% CI 0.0735–0.0820); all 100 pages met the ≤0.3-space localization threshold (Wilson 95% CI 96.3%–100%). The combined gate F1 ≥0.95 and p95 ≤0.3 spaces passed on 96/100 pages (Wilson 95% CI 90.2%–98.4%). The p95 is conditional on matched noteheads; precision/recall separately account for misses and extras. The patch classifier scored 0.9556 on 90 synthetic holdout crops; that is crop classification accuracy, not page-level note detection. See [the full report](results/synthetic-capture-pilot-2026-10-29.json) for per-page data, model hash, versions and hardware.
-
-[MĂSURAT] This is a synthetic-only result, not a real-photo benchmark or the IDSR DID metric. The image pipeline does not infer voices, accidentals, durations or staff-to-part mapping.
-
-[IPOTEZĂ] The synthetic proposal and refinement may transfer to registered score photographs. A falsifying test is a held-out set of real photographs with independently prepared notehead-center annotations and per-page precision, recall, F1 and staff-space localization confidence intervals.
-
-[MĂSURAT] The run used Python 3.9.6, NumPy 1.22.0 and OpenCV 5.0.0. The project requires Python ≥3.11, NumPy ≥1.26 and OpenCV ≥4.9,<5; the JSON records that this environment does not meet those constraints. Treat the result and latency as exploratory until rerun on supported dependencies and confirmed by CI.
-
-## Registered perspective-capture pilot
-
-[MĂSURAT — paired synthetic only] The checked-in run used 100 synthetic source pages with two staffs and 18 noteheads each, seeds 20261029–20261128, grayscale noise σ=2 and blur σ=0.35 px. Each page was warped by a known planar homography. The corrected view was given the exact four generated page corners; this excludes automatic corner-detection error. The JSON stores per-page raster hashes, corners, and both homographies. The run is not a real-camera or real-manuscript test, and its score is not IDSR DID.
-
-[MĂSURAT — paired synthetic only] The source-reference view detected 2 staffs on all 100 pages and scored micro F1 0.9967 (macro page F1 0.9966, page-bootstrap 95% CI 0.9939–0.9986). The uncorrected projective view detected 0 staffs and proposed 0 noteheads on all 100 pages (0/100; Wilson 95% upper bound 3.7%). With exact-corner correction, 2 staffs were detected on all pages; notehead micro F1 was 0.8039, with recall 0.7378 and precision 0.8830. Macro page F1 was 0.7968 (95% CI 0.7710–0.8216). Mean page p95 center error was 0.0993 staff spaces (95% CI 0.0953–0.1034), conditional on matched noteheads; every page met that conditional ≤0.3-space threshold. False negatives and false positives remain separate: 472 missed and 176 extra proposals across 100 pages.
-
-[IPOTEZĂ] The uncorrected failure is caused by the staff detector's near-horizontal morphology assumption: projective line slope prevents its horizontal opening kernel from retaining staff lines. Falsify this with a sweep over known page tilts and keystone levels, 100 seeds per level, and report staff-detection rate before and after correction. The checked-in per-page report records the 0/100 staff detections but does not isolate the causal image-processing operation.
-
-[MĂSURAT] This pilot used Python 3.9.6, NumPy 1.22.0 and OpenCV 5.0.0, outside declared project constraints. The result shows what exact manual corners can recover in this simulator; it gives no evidence about incorrect user taps, a curled page, phone ISP, actual photographs, or symbolic transcription quality.
-
-## Real-page ingestion smoke test
-
-[DEMONSTRAT PRIN CONSTRUCȚIE] A PDF page is read at the embedded image's native resolution only when it contains one axis-aligned raster covering the page, has no text or vector drawings, and its page/image aspect ratios agree within 1%. Other PDFs keep the normal DPI renderer. This avoids magnifying a scan merely because its PDF uses pixel-sized page units. The falsifier is a PDF satisfying those checks whose extracted raster differs in orientation, samples, or content from its intended page image.
-
-[MĂSURAT — unit test] One synthetic grayscale page embedded full-bleed in a PDF was loaded with a requested 300 DPI; the loader returned the original dimensions and byte-identical grayscale samples (N=1 page). The conventional Wilson 95% interval for a one-trial pass is [0.207, 1.000], so this test only verifies the code path, not all PDF encodings. See `test_image_only_pdf_uses_native_page_raster_without_dpi_upsampling`.
-
-[MĂSURAT — smoke, no labels] The local run used three selected scan-PDF pages associated with pair IDs 97 and 106 (`pair-97/page-0`, `pair-106/page-0`, `pair-106/page-1`); the matching vector PDFs were not used for ground truth. All three original PDF files passed byte-hash preservation checks (3/3; Wilson 95% interval [0.439, 1.000]). Staff groups were detected on 2/3 pages, a page-level rate of 0.667 (Wilson 95% CI [0.208, 0.939]); notehead proposals were present on the same 2/3 pages. The per-page notehead proposal counts were 0, 5, and 40, with detected staff counts 0, 1, and 5. This sample was selected for a smoke test, not sampled randomly. Its intervals describe the selected page outcomes under a binomial model and do not estimate performance on a wider population.
-
-[MĂSURAT — runtime only] End-to-end bundle times on Python 3.9.6, NumPy 1.22.0, OpenCV 5.0.0, macOS 27.0.1 arm64 were 0.418, 0.424, and 0.454 seconds; mean 0.432 seconds/page (2,000 page-bootstrap draws, seed 20261029, 95% CI [0.418, 0.454]). The runtime excludes user image selection and upload. The environment is outside the project's declared Python, NumPy, and OpenCV ranges.
-
-[MĂSURAT — limită] These PDFs have no independent notehead-center labels in this run, so precision, recall, pitch accuracy, and DID are uncomputed. The zero-staff result on pair 97 and one-staff result on pair 106 page 0 are visible failures, not successful reconstructions. The report records only hashes and measurements; it does not copy the private pages into the repository. Reproduce with `scoretwin evaluate-photo-smoke --manifest <local-manifest.json> --out <report.json>` using schema `scoretwin-photo-smoke-v1`. See [the saved summary](results/real-photo-smoke-2026-10-29.json).
-
-## Next gates
-
-1. Keep the synthetic regression benchmark deterministic and report precision/recall rather than only file creation.
-2. Add independent annotations for registered real photographs; the current smoke run tests ingestion and exposes failures but cannot score accuracy.
-3. Add stem, beam, accidental and duration hypotheses with explicit user correction.
-4. Train or retain a proposal model only if it beats a simpler baseline on real pages.
-5. Add DID and MDL only after testing metrics against adversarial manipulations and human judgments.
-
-
-## External annotated-page manifest
-
-To evaluate real photographs, create a JSON file with schema `scoretwin-annotated-pages-v1`. Every image entry needs an image path relative to the manifest and a `notes` array whose items include `center: [x, y]` in the rasterized image coordinate frame and `staff_index` numbered from top to bottom. A `pitch` object can optionally contain `step` and `octave`; `staff_spacing_px` is strongly recommended. An optional SHA-256 is checked against the original file.
-
-Example:
-
-```json
-{
-  "schema": "scoretwin-annotated-pages-v1",
-  "pages": [{
-    "id": "page-001",
-    "image": "images/page-001.jpg",
-    "staff_spacing_px": 17.0,
-    "notes": [
-      {"center": [245.2, 319.7], "staff_index": 0, "pitch": {"step": "G", "octave": 4}}
-    ]
-  }]
-}
-```
-
-The report includes per-page counts, precision/recall/F1, center error in pixels and staff spaces, pitch accuracy when labelled, and page-bootstrap 95% intervals for detection and normalized geometry error. These intervals describe variation across the supplied pages; they do not repair bias from a small or unrepresentative sample. Do not call this a real-photo benchmark unless the manifest actually references real photos with independently prepared annotations.
+Sistemul se descurcă singur din prima. Sau nu e gata.

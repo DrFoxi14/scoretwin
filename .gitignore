@@ -10,6 +10,10 @@ venv/
 build/
 dist/
 
+# OS
+.DS_Store
+*/.DS_Store
+
 # Local artifacts
 models/
 scoretwin-run/

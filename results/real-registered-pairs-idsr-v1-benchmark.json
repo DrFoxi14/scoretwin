@@ -1,0 +1,192 @@
+{
+  "schema": "real-registered-pairs-idsr-v1-benchmark",
+  "timestamp": "2026-10-30T03:11:00+02:00",
+  "pipeline_version": "1.0.0-ScoreTwin-Reasoning",
+  "summary": {
+    "total_pairs_evaluated": 3,
+    "staff_recall": 1.0,
+    "total_staffs_detected": 33,
+    "total_reference_staffs": 33,
+    "total_notes_detected": 317,
+    "total_lyrics_detected": 289,
+    "total_dynamics_detected": 258,
+    "total_investigated_traces": 759,
+    "total_abstained_or_unknown": 0,
+    "mean_parametric_ink_coverage_fraction": 0.6548,
+    "mean_parametric_ink_coverage_pct": 65.48,
+    "total_parametric_bits": 1734752,
+    "total_residual_bits": 6693520,
+    "total_bits": 8428272,
+    "parametric_bits_pct_X": 20.58,
+    "residual_bits_pct_Y": 79.42,
+    "mean_did_scalar": 6.9527,
+    "exact_lossless_2d_pixel_reconstruction_all": true
+  },
+  "per_pair": [
+    {
+      "pair_id": "pair_106",
+      "image_shape_px": [
+        896,
+        603
+      ],
+      "staff_spacing_px": 4.75,
+      "staffs_detected": 12,
+      "reference_staffs": 12,
+      "staff_recall": 1.0,
+      "notes_detected": 55,
+      "reference_notes": 118,
+      "notehead_precision": 0.0727,
+      "notehead_recall": 0.0339,
+      "notehead_f1": 0.0462,
+      "mean_position_error_sp": 0.3663,
+      "p95_position_error_sp": 0.5095,
+      "dynamic_lyrics_detected": 87,
+      "dynamic_dynamics_detected": 112,
+      "dynamic_voltas_detected": 0,
+      "investigated_traces": 332,
+      "abstained_or_unknown_count": 0,
+      "zero_abstentions_verified": true,
+      "exact_2d_pixel_reconstruction": true,
+      "maximum_absolute_pixel_error": 0,
+      "parametric_ink_coverage_fraction": 0.6925,
+      "parametric_ink_coverage_pct": 69.25,
+      "bits_decomposition": {
+        "parametric_bits_zlib": 601088,
+        "residual_bits_zlib": 1772176,
+        "total_bits": 2373264,
+        "parametric_pct_X": 25.33,
+        "residual_pct_Y": 74.67
+      },
+      "did_scalar": 6.9987,
+      "vector_components": {
+        "mean_position_error_sp": 0.3663,
+        "mask_iou": 0.3148,
+        "one_minus_iou": 0.6852,
+        "layout_emd_sp": 2.7453,
+        "anchored_ser": 0.9769,
+        "relation_f1": 0.5,
+        "photometric_excess": 0.22086,
+        "mdl_excess_bits_per_pixel": 5.60402,
+        "calibration_ece": 0.0,
+        "calibration_brier": 0.0
+      },
+      "axis_jnd_scores": {
+        "geometry_jnd": 4.804,
+        "symbolic_jnd": 5.1082,
+        "photometric_jnd": 4.4171,
+        "mdl_jnd": 22.4161,
+        "calibration_jnd": 0.0
+      }
+    },
+    {
+      "pair_id": "pair_29",
+      "image_shape_px": [
+        876,
+        603
+      ],
+      "staff_spacing_px": 5.0,
+      "staffs_detected": 12,
+      "reference_staffs": 12,
+      "staff_recall": 1.0,
+      "notes_detected": 104,
+      "reference_notes": 148,
+      "notehead_precision": 0.1346,
+      "notehead_recall": 0.0946,
+      "notehead_f1": 0.1111,
+      "mean_position_error_sp": 0.4123,
+      "p95_position_error_sp": 0.6127,
+      "dynamic_lyrics_detected": 149,
+      "dynamic_dynamics_detected": 54,
+      "dynamic_voltas_detected": 0,
+      "investigated_traces": 188,
+      "abstained_or_unknown_count": 0,
+      "zero_abstentions_verified": true,
+      "exact_2d_pixel_reconstruction": true,
+      "maximum_absolute_pixel_error": 0,
+      "parametric_ink_coverage_fraction": 0.7635,
+      "parametric_ink_coverage_pct": 76.35,
+      "bits_decomposition": {
+        "parametric_bits_zlib": 565592,
+        "residual_bits_zlib": 2781112,
+        "total_bits": 3346704,
+        "parametric_pct_X": 16.9,
+        "residual_pct_Y": 83.1
+      },
+      "did_scalar": 6.4736,
+      "vector_components": {
+        "mean_position_error_sp": 0.4123,
+        "mask_iou": 0.3095,
+        "one_minus_iou": 0.6905,
+        "layout_emd_sp": 1.4897,
+        "anchored_ser": 0.9524,
+        "relation_f1": 0.5,
+        "photometric_excess": 0.23379,
+        "mdl_excess_bits_per_pixel": 5.11247,
+        "calibration_ece": 0.0,
+        "calibration_brier": 0.0
+      },
+      "axis_jnd_scores": {
+        "geometry_jnd": 4.0137,
+        "symbolic_jnd": 5.0021,
+        "photometric_jnd": 4.6759,
+        "mdl_jnd": 20.4499,
+        "calibration_jnd": 0.0
+      }
+    },
+    {
+      "pair_id": "pair_97",
+      "image_shape_px": [
+        925,
+        603
+      ],
+      "staff_spacing_px": 4.75,
+      "staffs_detected": 9,
+      "reference_staffs": 9,
+      "staff_recall": 1.0,
+      "notes_detected": 158,
+      "reference_notes": 138,
+      "notehead_precision": 0.0696,
+      "notehead_recall": 0.0797,
+      "notehead_f1": 0.0743,
+      "mean_position_error_sp": 0.3824,
+      "p95_position_error_sp": 0.527,
+      "dynamic_lyrics_detected": 53,
+      "dynamic_dynamics_detected": 92,
+      "dynamic_voltas_detected": 0,
+      "investigated_traces": 239,
+      "abstained_or_unknown_count": 0,
+      "zero_abstentions_verified": true,
+      "exact_2d_pixel_reconstruction": true,
+      "maximum_absolute_pixel_error": 0,
+      "parametric_ink_coverage_fraction": 0.5083,
+      "parametric_ink_coverage_pct": 50.83,
+      "bits_decomposition": {
+        "parametric_bits_zlib": 568072,
+        "residual_bits_zlib": 2140232,
+        "total_bits": 2708304,
+        "parametric_pct_X": 20.98,
+        "residual_pct_Y": 79.02
+      },
+      "did_scalar": 7.3858,
+      "vector_components": {
+        "mean_position_error_sp": 0.3824,
+        "mask_iou": 0.1817,
+        "one_minus_iou": 0.8183,
+        "layout_emd_sp": 6.8995,
+        "anchored_ser": 0.9459,
+        "relation_f1": 0.5,
+        "photometric_excess": 0.18422,
+        "mdl_excess_bits_per_pixel": 4.70851,
+        "calibration_ece": 0.0,
+        "calibration_brier": 0.0
+      },
+      "axis_jnd_scores": {
+        "geometry_jnd": 8.3861,
+        "symbolic_jnd": 4.9739,
+        "photometric_jnd": 3.6844,
+        "mdl_jnd": 18.834,
+        "calibration_jnd": 0.0
+      }
+    }
+  ]
+}

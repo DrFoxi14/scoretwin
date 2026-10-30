@@ -44,6 +44,33 @@ _MATERIALS = [
         },
         "doubleSided": True,
     },
+    {
+        "name": "lyrics-ink",
+        "pbrMetallicRoughness": {
+            "baseColorFactor": [0.15, 0.48, 0.85, 1.0],
+            "metallicFactor": 0.0,
+            "roughnessFactor": 0.85,
+        },
+        "doubleSided": True,
+    },
+    {
+        "name": "dynamics-ink",
+        "pbrMetallicRoughness": {
+            "baseColorFactor": [0.65, 0.18, 0.78, 1.0],
+            "metallicFactor": 0.0,
+            "roughnessFactor": 0.85,
+        },
+        "doubleSided": True,
+    },
+    {
+        "name": "performer-annotation-z2",
+        "pbrMetallicRoughness": {
+            "baseColorFactor": [0.92, 0.62, 0.12, 1.0],
+            "metallicFactor": 0.0,
+            "roughnessFactor": 0.85,
+        },
+        "doubleSided": True,
+    },
 ]
 
 
@@ -263,8 +290,21 @@ def build_gltf(
         "staffline": 0,
         "barline": 0,
         "stem": 0,
+        "beam": 1,
+        "accidental": 1,
+        "augmentation_dot": 1,
         "notehead": 1,
         "unknown_region": 2,
+        "lyric_syllable": 3,
+        "lyric_hyphen": 3,
+        "dynamic_marking": 4,
+        "dynamic_glyph_mf": 4,
+        "dynamic_glyph_f_or_p": 4,
+        "hairpin_crescendo": 4,
+        "hairpin_diminuendo": 4,
+        "volta_bracket": 5,
+        "investigated_trace": 5,
+        "performer_directive": 5,
     }
 
     def _buffer_view(data: bytes, target: int) -> int:
@@ -442,11 +482,62 @@ def build_gltf(
                 rotation=rotation_rad,
             )
             _add_node(primitive, vertices, indices, material_by_kind[kind], z)
+        elif kind == "beam":
+            x0 = float(geometry.get("x0_px", 0))
+            y0 = float(geometry.get("y0_px", 0))
+            x1 = float(geometry.get("x1_px", x0 + 8.0))
+            y1 = float(geometry.get("y1_px", y0))
+            thickness = max(1.5, float(geometry.get("thickness_px_estimate", 3.5)))
+            z = layer_separation * (1.25 + max(0, staff_index) * 0.15)
+            vertices, indices = _segment(x0, y0, x1, y1, thickness, z, page_height)
+            _add_node(primitive, vertices, indices, material_by_kind[kind], z)
+        elif kind == "accidental":
+            bbox = geometry.get("bbox_px", [0, 0, 6, 10])
+            x, y, width, height = [float(value) for value in bbox]
+            z = layer_separation * (1.15 + max(0, staff_index) * 0.15)
+            vertices, indices = _rectangle_outline(
+                x, y, max(2.0, width), max(2.0, height), z, page_height
+            )
+            _add_node(primitive, vertices, indices, material_by_kind[kind], z)
+        elif kind == "augmentation_dot":
+            cx = float(geometry.get("center_x_px", 0))
+            cy = float(geometry.get("center_y_px", 0))
+            r = max(1.2, float(geometry.get("radius_px", 2.0)))
+            z = layer_separation * (1.1 + max(0, staff_index) * 0.15)
+            vertices, indices = _ellipse(
+                cx, cy, r, r, z, page_height, hollow=False, rotation=0.0, segments=16
+            )
+            _add_node(primitive, vertices, indices, material_by_kind[kind], z)
         elif kind == "unknown_region":
             bbox = geometry.get("bbox_px", [0, 0, 0, 0])
             x, y, width, height = [float(value) for value in bbox]
             z = layer_separation * 0.5
             vertices, indices = _rectangle_outline(x, y, width, height, z, page_height)
+            _add_node(primitive, vertices, indices, material_by_kind[kind], z)
+        elif kind in ("lyric_syllable", "lyric_hyphen"):
+            bbox = geometry.get("bbox_px", [0, 0, 8, 4])
+            x, y, width, height = [float(value) for value in bbox]
+            z = layer_separation * 0.70
+            vertices, indices = _rectangle_outline(x, y, max(2.0, width), max(2.0, height), z, page_height)
+            _add_node(primitive, vertices, indices, material_by_kind[kind], z)
+        elif kind in ("dynamic_marking", "dynamic_glyph_mf", "dynamic_glyph_f_or_p", "hairpin_crescendo", "hairpin_diminuendo"):
+            bbox = geometry.get("bbox_px", [0, 0, 10, 6])
+            x, y, width, height = [float(value) for value in bbox]
+            z = layer_separation * 0.90
+            vertices, indices = _rectangle_outline(x, y, max(2.0, width), max(2.0, height), z, page_height)
+            _add_node(primitive, vertices, indices, material_by_kind[kind], z)
+        elif kind == "volta_bracket":
+            x0 = float(geometry.get("exact_x_start_cm", 0.0)) * (300.0 / 2.54)
+            x1 = float(geometry.get("exact_x_end_cm", 1.0)) * (300.0 / 2.54)
+            y0 = float(geometry.get("y_top_px", 100.0))
+            z = layer_separation * 1.50
+            vertices, indices = _segment(x0, y0, x1, y0, 2.0, z, page_height)
+            _add_node(primitive, vertices, indices, material_by_kind[kind], z)
+        elif kind in ("investigated_trace", "performer_directive"):
+            bbox = geometry.get("bbox_px", [0, 0, 8, 8])
+            x, y, width, height = [float(value) for value in bbox]
+            z = layer_separation * 2.0  # Floating on Layer z=2
+            vertices, indices = _rectangle_outline(x, y, max(2.0, width), max(2.0, height), z, page_height)
             _add_node(primitive, vertices, indices, material_by_kind[kind], z)
         else:
             skipped.append({"id": primitive_id, "reason": f"unsupported_kind:{kind}"})

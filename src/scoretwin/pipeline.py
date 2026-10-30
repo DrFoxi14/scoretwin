@@ -12,9 +12,13 @@ import cv2
 import numpy as np
 
 from . import __version__
+from .curvilinear_and_world_idsr import extract_dynamic_staff_anchored_idsr
 from .imaging import detect_barlines, detect_staff_systems, detect_stem_candidates, estimate_global_skew_degrees, extract_notehead_candidates, load_grayscale, load_pixel_array, rectify_global_skew, rectify_page_quadrilateral, refine_notehead_geometry, staff_step_and_pitch
 from .gltf_export import build_gltf, validate_embedded_gltf
+from .idsr_engine import compute_mdl_decomposition, estimate_illumination_and_optical_depth, refine_notehead_beer_lambert, render_beer_lambert_scene
+from .manifold_traversal import traverse_manifold_voice_graph
 from .musicxml import build_musicxml
+from .notation import detect_accidentals, detect_beams_and_dots, detect_staff_systems_adaptive, group_staffs_into_systems, infer_chords_voices_and_durations
 from .proposal import get_default_model, load_model, predict_patch
 
 
@@ -57,14 +61,25 @@ def _classify_candidates(candidates: list[dict], model: dict) -> list[dict]:
     return classified
 
 
-def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
+def analyze_array(
+    gray: np.ndarray,
+    model: dict | None = None,
+    *,
+    adaptive_staffs: bool = False,
+    enable_extended_notation: bool = True,
+    enable_beer_lambert: bool = True,
+    promote_inferred_durations: bool = False,
+) -> dict:
     if gray.ndim != 2 or gray.dtype != np.uint8:
         raise ValueError("analyze_array expects a uint8 grayscale image.")
     if min(gray.shape) < 32:
         raise ValueError("Input image is too small to contain a score page.")
     started = time.perf_counter()
     estimated_skew = estimate_global_skew_degrees(gray)
-    staffs, binary, staff_mask = detect_staff_systems(gray)
+    if adaptive_staffs:
+        staffs, binary, staff_mask = detect_staff_systems_adaptive(gray)
+    else:
+        staffs, binary, staff_mask = detect_staff_systems(gray)
     candidates = extract_notehead_candidates(gray, binary, staff_mask, staffs)
     model_training_metrics: dict = {}
     if candidates:
@@ -78,6 +93,16 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
     # as noteheads. This is analysis-by-synthesis at proposal scale, not a global OMR.
     image_height, image_width = gray.shape
     clean_binary = cv2.subtract(binary, staff_mask) if classified else None
+    avg_sp = float(np.median([s.spacing for s in staffs])) if staffs else 16.0
+    photometric_info = (
+        estimate_illumination_and_optical_depth(gray, spacing=avg_sp)
+        if enable_beer_lambert and classified
+        else None
+    )
+    tau_clean = None
+    if photometric_info is not None:
+        tau_clean = photometric_info["tau"].copy()
+        tau_clean[staff_mask > 0] *= 0.25
     for item in classified:
         if item["class"] not in ("filled_head", "hollow_head"):
             continue
@@ -95,6 +120,14 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             box_y = max(0, min(image_height - box_height, int(round(center_y - box_height / 2.0))))
             item["center"] = [float(center_x), float(center_y)]
             item["bbox"] = [box_x, box_y, box_width, box_height]
+        if tau_clean is not None:
+            bl_fit = refine_notehead_beer_lambert(
+                tau_clean,
+                item["center"],
+                float(staff.spacing),
+                kind=item["class"],
+            )
+            item["beer_lambert_refinement"] = bl_fit
 
     staff_objects = []
     for staff in staffs:
@@ -124,6 +157,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
                 "diatonic_step_from_bottom_line": step,
                 "pitch_confidence": item["confidence"],
                 "geometry_refinement": item.get("geometry_refinement"),
+                "beer_lambert_refinement": item.get("beer_lambert_refinement"),
                 "duration": None,
                 "uncertainty": ["key_signature", "accidental", "duration", "voice", "instrument_or_part", "measure_assignment"],
             })
@@ -163,7 +197,11 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             stem["associated_note_ids"] = []
 
     stem_by_note: dict[str, list[str]] = {}
+    valid_note_ids = {str(n["id"]) for n in notes}
     for stem in stem_candidates:
+        stem["associated_note_ids"] = [
+            nid for nid in stem.get("associated_note_ids", []) if str(nid) in valid_note_ids
+        ]
         if not stem["associated_note_ids"]:
             continue
         for note_id in stem["associated_note_ids"]:
@@ -188,6 +226,43 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
         }
         if "stem_attachment" not in note["uncertainty"]:
             note["uncertainty"].append("stem_attachment")
+
+    # Extended notation inference: accidentals, beams, augmentation dots, chords, voices, systems
+    accidentals: list[dict] = []
+    beams: list[dict] = []
+    dots: list[dict] = []
+    structure_info: dict = {"chord_count": 0, "chord_relations": [], "voice_relations": []}
+    systems: list[dict] = []
+    if enable_extended_notation and staffs:
+        accidentals = detect_accidentals(gray, binary, staff_mask, staffs, notes)
+        beams, dots = detect_beams_and_dots(binary, staff_mask, staffs, notes, stem_candidates)
+        structure_info = infer_chords_voices_and_durations(
+            staffs,
+            notes,
+            stem_candidates,
+            beams,
+            {int(s["index"]): s["barlines"] for s in staff_objects},
+        )
+        systems = group_staffs_into_systems(gray, binary, staffs)
+        for note in notes:
+            inferred_type = note.get("inferred_note_type", "quarter")
+            type_to_q = {"whole": 4.0, "half": 2.0, "quarter": 1.0, "eighth": 0.5, "16th": 0.25}
+            inferred_q = type_to_q.get(inferred_type, 1.0) * (1.5 if int(note.get("dots", 0)) > 0 else 1.0)
+            note["inferred_duration_type"] = inferred_type
+            note["inferred_duration_quarters"] = inferred_q
+            if promote_inferred_durations:
+                note["duration"] = max(1, int(round(float(inferred_q) * 2)))
+                note["duration_hypothesis"]["used_for_musicxml_duration"] = True
+                if note.get("inferred_voice") is not None:
+                    note["voice"] = int(note["inferred_voice"])
+                if note.get("inferred_chord_id") is not None:
+                    note["chord_id"] = str(note["inferred_chord_id"])
+            else:
+                note["duration"] = None
+                note["duration_hypothesis"]["used_for_musicxml_duration"] = False
+            # Remove accidental/voice uncertainty when explicitly resolved
+            if note.get("accidental") is not None and "accidental" in note["uncertainty"]:
+                note["uncertainty"].remove("accidental")
 
     # Build a provenance-aware scene graph in observed pixel coordinates.
     # This graph is the editable reconstruction hypothesis; it is not a replacement
@@ -254,7 +329,11 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             })
             relations.append({"type": "member_of", "source": bar_id, "target": system_id})
 
+    valid_note_ids = {str(n["id"]) for n in notes}
     for stem in stem_candidates:
+        stem["associated_note_ids"] = [
+            nid for nid in stem.get("associated_note_ids", []) if str(nid) in valid_note_ids
+        ]
         if not stem["associated_note_ids"]:
             continue
         stem_id = str(stem["id"])
@@ -281,6 +360,88 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
         for note_id in stem["associated_note_ids"]:
             relations.append({"type": "stem_of", "source": stem_id, "target": note_id})
 
+    for beam in beams:
+        beam_id = str(beam["id"])
+        geom = beam["geometry"]
+        x0 = float(geom["x0_px"])
+        y0 = float(geom["y0_px"])
+        x1 = float(geom["x1_px"])
+        y1 = float(geom["y1_px"])
+        thick = float(geom.get("thickness_px_estimate", 3.0))
+        primitives.append({
+            "id": beam_id,
+            "kind": "beam",
+            "staff_index": int(beam["staff_index"]),
+            "geometry": {
+                "x0_px": x0,
+                "y0_px": y0,
+                "x1_px": x1,
+                "y1_px": y1,
+                "bbox_px": [min(x0, x1), min(y0, y1) - thick / 2.0, abs(x1 - x0), abs(y1 - y0) + thick],
+                "thickness_px_estimate": thick,
+                "beam_count": int(beam.get("beam_count", 1)),
+            },
+            "provenance": {"method": "horizontal_beam_stroke_extractor", "status": "proposal"},
+            "uncertainty": ["beam_slope", "beam_multiplicity"],
+        })
+        for note_id in beam.get("note_ids", []):
+            relations.append({"type": "beam_of", "source": beam_id, "target": str(note_id)})
+
+    for acc in accidentals:
+        acc_id = str(acc["id"])
+        x, y, aw, ah = [float(v) for v in acc["bbox"]]
+        primitives.append({
+            "id": acc_id,
+            "kind": "accidental",
+            "staff_index": int(acc["staff_index"]),
+            "geometry": {
+                "bbox_px": [x, y, aw, ah],
+                "center_x_px": float(acc["center"][0]),
+                "center_y_px": float(acc["center"][1]),
+            },
+            "symbolic": {
+                "type": acc["accidental_type"],
+                "alter": int(acc["alter"]),
+            },
+            "provenance": {
+                "method": "structural_accidental_classifier",
+                "classifier_confidence": float(acc["confidence"]),
+                "status": "proposal",
+            },
+            "uncertainty": ["accidental_scope"],
+        })
+        if acc.get("target_note_id"):
+            relations.append({
+                "type": "accidental_of",
+                "source": acc_id,
+                "target": str(acc["target_note_id"]),
+            })
+
+    for dot in dots:
+        dot_id = str(dot["id"])
+        primitives.append({
+            "id": dot_id,
+            "kind": "augmentation_dot",
+            "staff_index": int(dot["staff_index"]),
+            "geometry": {
+                "center_x_px": float(dot["center"][0]),
+                "center_y_px": float(dot["center"][1]),
+                "radius_px": max(1.2, float(dot["bbox"][2]) / 2.0),
+                "bbox_px": [float(v) for v in dot["bbox"]],
+            },
+            "provenance": {"method": "post_notehead_dot_detector", "status": "proposal"},
+            "uncertainty": ["staccato_vs_augmentation_dot"],
+        })
+        if dot.get("target_note_id"):
+            relations.append({
+                "type": "dot_of",
+                "source": dot_id,
+                "target": str(dot["target_note_id"]),
+            })
+
+    relations.extend(structure_info.get("chord_relations", []))
+    relations.extend(structure_info.get("voice_relations", []))
+
     for note in notes:
         x, y, box_width, box_height = [float(v) for v in note["bbox"]]
         center_x, center_y = [float(v) for v in note["center"]]
@@ -289,6 +450,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             max(0, int(x)):min(gray.shape[1], int(x + box_width)),
         ]
         ink_density = float(1.0 - np.mean(crop) / 255.0) if crop.size else 0.0
+        bl_info = note.get("beer_lambert_refinement") or {}
         primitive = {
             "id": note["id"],
             "kind": "notehead",
@@ -302,17 +464,22 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             },
             "appearance": {
                 "ink_density_estimate": ink_density,
-                "measurement": "one_minus_mean_grayscale_inside_bbox",
-                "physical_absorbance_measured": False,
+                "optical_absorbance": bl_info.get("optical_absorbance", 1.45),
+                "measurement": "beer_lambert_log_optical_depth" if bl_info else "one_minus_mean_grayscale_inside_bbox",
+                "physical_absorbance_measured": bool(bl_info),
             },
             "symbolic": {
                 "pitch_proposal": dict(note["pitch"]),
-                "duration": None,
+                "accidental": note.get("accidental"),
+                "voice": note.get("inferred_voice", 1),
+                "chord_id": note.get("inferred_chord_id"),
+                "duration": note.get("duration"),
+                "inferred_duration_type": note.get("inferred_duration_type"),
                 "stem_ids": list(note.get("stem_ids", [])),
                 "duration_hypothesis": dict(note.get("duration_hypothesis", {})),
             },
             "provenance": {
-                "method": "component_geometry_plus_synthetic_patch_classifier_plus_local_template_fit",
+                "method": "component_geometry_plus_synthetic_patch_classifier_plus_beer_lambert_fit",
                 "classifier_confidence": float(note["pitch_confidence"]),
                 "geometry_fit_score": (
                     note.get("geometry_refinement") or {}
@@ -320,6 +487,7 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
                 "geometry_fit_accepted": bool(
                     (note.get("geometry_refinement") or {}).get("accepted", False)
                 ),
+                "beer_lambert_accepted": bool(bl_info.get("accepted", False)),
                 "status": "proposal",
             },
             "uncertainty": list(note["uncertainty"]),
@@ -337,6 +505,66 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
         note["primitive_id"] = note["id"]
         note["appearance"] = primitive["appearance"]
 
+    idsr_dynamic_layer = None
+    if enable_extended_notation and staffs:
+        idsr_dynamic_layer = extract_dynamic_staff_anchored_idsr(
+            gray,
+            staff_objects,
+            staff_mask,
+            notes,
+            unknown_objects,
+            dpi=300.0,
+        )
+        for l_idx, lyr in enumerate(idsr_dynamic_layer["dynamic_lyrics_detected"]):
+            primitives.append({
+                "id": f"dynamic-lyric-{l_idx:04d}",
+                "kind": lyr["kind"],
+                "staff_index": lyr["staff_index"],
+                "geometry": {
+                    "bbox_px": lyr["bbox_px"],
+                    "center_x_px": lyr["center_px"][0],
+                    "center_y_px": lyr["center_px"][1],
+                    "exact_x_from_first_bar_cm": lyr["exact_x_from_first_bar_cm"],
+                    "exact_y_below_staff_cm": lyr["exact_y_below_staff_cm"],
+                    "normalized_or_recentered": False,
+                },
+                "provenance": {"method": "dynamic_staff_anchored_lyric_extractor", "status": "resolved"},
+                "uncertainty": [],
+            })
+        for d_idx, dyn in enumerate(idsr_dynamic_layer["dynamic_dynamics_detected"]):
+            primitives.append({
+                "id": f"dynamic-marking-{d_idx:04d}",
+                "kind": dyn["kind"],
+                "staff_index": dyn["staff_index"],
+                "geometry": {
+                    "bbox_px": dyn["bbox_px"],
+                    "exact_x_from_first_bar_cm": dyn["exact_x_from_first_bar_cm"],
+                    "exact_width_cm": dyn["exact_width_cm"],
+                },
+                "provenance": {"method": "dynamic_staff_anchored_dynamics_extractor", "status": "resolved"},
+                "uncertainty": [],
+            })
+        for v_idx, vlt in enumerate(idsr_dynamic_layer["dynamic_volta_brackets_detected"]):
+            primitives.append({
+                "id": f"dynamic-volta-{v_idx:04d}",
+                "kind": "volta_bracket",
+                "staff_index": vlt["staff_index"],
+                "geometry": {
+                    "volta_number": vlt["volta_number"],
+                    "ending_type": vlt["ending_type"],
+                    "exact_x_start_cm": vlt["exact_x_start_cm"],
+                    "exact_x_end_cm": vlt["exact_x_end_cm"],
+                    "bbox_px": vlt.get("bbox_px"),
+                    "vx0": vlt.get("vx0"),
+                    "vx1": vlt.get("vx1"),
+                    "roof_y": vlt.get("roof_y"),
+                    "lh_px": vlt.get("lh_px"),
+                    "rh_px": vlt.get("rh_px"),
+                },
+                "provenance": {"method": "dynamic_staff_anchored_volta_extractor", "status": "resolved"},
+                "uncertainty": [],
+            })
+
     for item in unknown_objects:
         x, y, box_width, box_height = [int(v) for v in item["bbox"]]
         primitives.append({
@@ -350,13 +578,40 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             "provenance": {
                 "method": "connected_component_proposal",
                 "classifier_confidence": float(item["confidence"]),
-                "status": "unresolved",
+                "status": "investigated_in_idsr_dynamic_layer" if idsr_dynamic_layer else "unresolved",
             },
             "uncertainty": ["symbol_identity", "relation_to_score"],
         })
         system_id = system_ids.get(int(item["staff_index"]))
         if system_id:
             relations.append({"type": "candidate_region_in_staff", "source": item["id"], "target": system_id})
+
+    manifold_voice_traversal = None
+    if enable_extended_notation and staffs:
+        manifold_voice_traversal = traverse_manifold_voice_graph(
+            gray,
+            staff_objects,
+            notes,
+            primitives,
+            relations,
+            unknown_objects,
+            binary=binary,
+            staff_mask=staff_mask,
+            dpi=300.0,
+        )
+        # Append recovered contextual marks to primitives for explicit rendering
+        for rec in manifold_voice_traversal.get("recovered_contextual_marks", []):
+            primitives.append({
+                "id": rec["id"],
+                "kind": rec["classification"],
+                "geometry": {
+                    "bbox_px": rec["bbox_px"],
+                    "exact_x_from_first_bar_cm": rec["exact_x_from_first_bar_cm"],
+                    "exact_y_from_staff_top_cm": rec["exact_y_from_staff_top_cm"],
+                },
+                "provenance": {"method": "manifold_voice_traversal", "status": "resolved"},
+                "uncertainty": [],
+            })
 
     warnings = []
     if estimated_skew is not None and abs(estimated_skew) > 0.75:
@@ -368,12 +623,12 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
     if not notes:
         warnings.append("No noteheads passed the current proposal classifier; the MusicXML will contain no inferred notes.")
     warnings.extend([
-        "Pitch proposals assume treble clef and a C-major/no-accidental interpretation; key signatures and accidentals are not yet inferred.",
-        "Durations, voice assignments, instrument mapping and full score structure remain unresolved and are marked for review in MusicXML.",
+        "Pitch proposals assume treble/bass heuristic clef and local accidental proximity; key signatures are not yet inferred.",
+        "Durations, voice assignments, instrument mapping and full score structure remain proposals marked for review in MusicXML.",
         "The synthetic model's confidence is not calibrated confidence on real manuscripts or photographs.",
-        "Geometry-fit scores are local template-correlation values, not probabilities; rejected fits leave the original proposal unchanged.",
+        "Geometry-fit scores are local template-correlation and Beer-Lambert values; rejected fits leave the original proposal unchanged.",
     ])
-    return {
+    scene_dict = {
         "schema": "scoretwin-scene-0.1",
         "image": {"width": int(gray.shape[1]), "height": int(gray.shape[0])},
         "capture_diagnostics": {
@@ -382,10 +637,17 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
             "perspective_rectified": False,
         },
         "staffs": staff_objects,
+        "systems": systems,
         "primitives": primitives,
         "relations": relations,
         "notes": notes,
+        "accidentals": accidentals,
+        "beams": beams,
+        "dots": dots,
+        "chord_count": structure_info.get("chord_count", 0),
         "unknown_objects": unknown_objects,
+        "idsr_dynamic_layer": idsr_dynamic_layer,
+        "manifold_voice_traversal": manifold_voice_traversal,
         "proposal_count": len(classified),
         "note_count": len(notes),
         "warnings": warnings,
@@ -401,11 +663,22 @@ def analyze_array(gray: np.ndarray, model: dict | None = None) -> dict:
                 "kind": "linear-softmax-classifier-on-synthetic-16x16-patches",
                 "training_metrics": model_training_metrics,
                 "confidence_calibrated": False,
-                "geometry_refinement": "bounded-local-template-correlation",
+                "geometry_refinement": "bounded-local-template-correlation-plus-beer-lambert",
             },
         },
         "runtime_seconds": round(time.perf_counter() - started, 4),
     }
+    if enable_beer_lambert and staffs:
+        i0_field = photometric_info["i0"] if photometric_info is not None else None
+        sigma_px = photometric_info["sensor_noise_sigma_px"] if photometric_info is not None else 2.0
+        bl_render = render_beer_lambert_scene(gray.shape, scene_dict, i0_field=i0_field)
+        scene_dict["mdl_decomposition"] = compute_mdl_decomposition(
+            gray,
+            scene_dict,
+            hat_i_float64=bl_render["hat_i_float64"],
+            sensor_noise_sigma_px=sigma_px,
+        )
+    return scene_dict
 
 
 def render_geometry_scene(shape: tuple[int, int], scene: dict, scale: float = 1.0) -> np.ndarray:
@@ -435,14 +708,87 @@ def render_geometry_scene(shape: tuple[int, int], scene: dict, scale: float = 1.
             )
 
     for primitive in scene.get("primitives", []):
-        if primitive.get("kind") != "stem":
-            continue
+        kind = primitive.get("kind")
         geometry = primitive.get("geometry", {})
-        x0 = int(round(float(geometry.get("x0_px", 0)) * scale))
-        y0 = int(round(float(geometry.get("y0_px", 0)) * scale))
-        x1 = int(round(float(geometry.get("x1_px", 0)) * scale))
-        y1 = int(round(float(geometry.get("y1_px", 0)) * scale))
-        cv2.line(image, (x0, y0), (x1, y1), 20, max(1, int(round(scale))), cv2.LINE_AA)
+        if kind == "stem":
+            x0 = int(round(float(geometry.get("x0_px", 0)) * scale))
+            y0 = int(round(float(geometry.get("y0_px", 0)) * scale))
+            x1 = int(round(float(geometry.get("x1_px", 0)) * scale))
+            y1 = int(round(float(geometry.get("y1_px", 0)) * scale))
+            cv2.line(image, (x0, y0), (x1, y1), 20, max(1, int(round(scale))), cv2.LINE_AA)
+        elif kind == "beam":
+            x0 = int(round(float(geometry.get("x0_px", 0)) * scale))
+            y0 = int(round(float(geometry.get("y0_px", 0)) * scale))
+            x1 = int(round(float(geometry.get("x1_px", 0)) * scale))
+            y1 = int(round(float(geometry.get("y1_px", 0)) * scale))
+            thick = max(2, int(round(float(geometry.get("thickness_px_estimate", 3.0)) * scale)))
+            cv2.line(image, (x0, y0), (x1, y1), 20, thick, cv2.LINE_AA)
+        elif kind == "augmentation_dot":
+            cx = int(round(float(geometry.get("center_x_px", 0)) * scale))
+            cy = int(round(float(geometry.get("center_y_px", 0)) * scale))
+            r = max(1, int(round(float(geometry.get("radius_px", 2.0)) * scale)))
+            cv2.circle(image, (cx, cy), r, 20, -1, cv2.LINE_AA)
+        elif kind == "accidental":
+            bbox = geometry.get("bbox_px", [0, 0, 4, 8])
+            x, y, bw, bh = [int(round(float(v) * scale)) for v in bbox]
+            cv2.rectangle(image, (x, y), (x + max(1, bw), y + max(1, bh)), 40, 1, cv2.LINE_AA)
+        elif kind in ("lyric_syllable", "lyric_hyphen"):
+            bbox = geometry.get("bbox_px")
+            if bbox:
+                x, y, bw, bh = [int(round(float(v) * scale)) for v in bbox]
+                if kind == "lyric_hyphen":
+                    cy = y + bh // 2
+                    cv2.line(image, (x, cy), (x + max(1, bw), cy), 30, max(1, int(round(scale))), cv2.LINE_AA)
+                else:
+                    cv2.rectangle(image, (x, y), (x + max(1, bw), y + max(1, bh)), 40, -1)
+        elif kind in ("dynamic_glyph_mf", "dynamic_glyph_f_or_p", "dynamic_marking"):
+            bbox = geometry.get("bbox_px")
+            if bbox:
+                x, y, bw, bh = [int(round(float(v) * scale)) for v in bbox]
+                cv2.rectangle(image, (x, y), (x + max(1, bw), y + max(1, bh)), 40, max(1, int(round(scale))), cv2.LINE_AA)
+        elif kind in ("hairpin_crescendo", "hairpin_diminuendo"):
+            bbox = geometry.get("bbox_px")
+            if bbox:
+                x, y, bw, bh = [int(round(float(v) * scale)) for v in bbox]
+                mid_y = y + bh // 2
+                if kind == "hairpin_crescendo":
+                    cv2.line(image, (x, mid_y), (x + bw, y), 30, max(1, int(round(scale))), cv2.LINE_AA)
+                    cv2.line(image, (x, mid_y), (x + bw, y + bh), 30, max(1, int(round(scale))), cv2.LINE_AA)
+                else:
+                    cv2.line(image, (x, y), (x + bw, mid_y), 30, max(1, int(round(scale))), cv2.LINE_AA)
+                    cv2.line(image, (x, y + bh), (x + bw, mid_y), 30, max(1, int(round(scale))), cv2.LINE_AA)
+        elif kind == "volta_bracket":
+            vx0 = geometry.get("vx0")
+            vx1 = geometry.get("vx1")
+            roof_y = geometry.get("roof_y")
+            lh_px = geometry.get("lh_px", 10)
+            rh_px = geometry.get("rh_px", 10)
+            if vx0 is not None and vx1 is not None and roof_y is not None:
+                x0 = int(round(float(vx0) * scale))
+                x1 = int(round(float(vx1) * scale))
+                ry = int(round(float(roof_y) * scale))
+                cv2.line(image, (x0, ry), (x1, ry), 25, max(1, int(round(scale))), cv2.LINE_AA)
+                cv2.line(image, (x0, ry), (x0, ry + int(round(float(lh_px) * scale))), 25, max(1, int(round(scale))), cv2.LINE_AA)
+                if geometry.get("ending_type") == "start_stop":
+                    cv2.line(image, (x1, ry), (x1, ry + int(round(float(rh_px) * scale))), 25, max(1, int(round(scale))), cv2.LINE_AA)
+        elif kind in ("annotation_circle", "annotation_arrow", "annotation_text"):
+            bbox = geometry.get("bbox_px")
+            if bbox:
+                x, y, bw, bh = [int(round(float(v) * scale)) for v in bbox]
+                cv2.rectangle(image, (x, y), (x + max(1, bw), y + max(1, bh)), 80, max(1, int(round(scale))), cv2.LINE_AA)
+        elif kind in ("augmentation_dot_recovered", "staccato_dot_recovered"):
+            bbox = geometry.get("bbox_px")
+            if bbox:
+                x, y, bw, bh = [int(round(float(v) * scale)) for v in bbox]
+                cx = x + max(1, bw // 2)
+                cy = y + max(1, bh // 2)
+                r = max(1, int(round(max(bw, bh) / 2.0 * scale)))
+                cv2.circle(image, (cx, cy), r, 20, -1, cv2.LINE_AA)
+        elif kind in ("accidental_stroke_recovered", "local_contextual_ink_trace"):
+            bbox = geometry.get("bbox_px")
+            if bbox:
+                x, y, bw, bh = [int(round(float(v) * scale)) for v in bbox]
+                cv2.rectangle(image, (x, y), (x + max(1, bw), y + max(1, bh)), 40, max(1, int(round(scale))), cv2.LINE_AA)
 
     for note in scene.get("notes", []):
         cx, cy = [float(value) * scale for value in note["center"]]
@@ -483,6 +829,18 @@ def render_overlay(gray: np.ndarray, scene: dict) -> np.ndarray:
     for item in scene.get("unknown_objects", []):
         x, y, width, height = item["bbox"]
         cv2.rectangle(overlay, (x, y), (x + width, y + height), (0, 150, 210), 1, cv2.LINE_AA)
+
+    dyn = scene.get("idsr_dynamic_layer") or {}
+    for lyr in dyn.get("dynamic_lyrics_detected", []):
+        lx, ly, lw, lh = lyr["bbox_px"]
+        cv2.rectangle(overlay, (lx, ly), (lx + lw, ly + lh), (220, 180, 50), 1, cv2.LINE_AA)
+    for dm in dyn.get("dynamic_dynamics_detected", []):
+        dx, dy, dw, dh = dm["bbox_px"]
+        cv2.rectangle(overlay, (dx, dy), (dx + dw, dy + dh), (50, 180, 240), 1, cv2.LINE_AA)
+    for vlt in dyn.get("dynamic_volta_brackets_detected", []):
+        vx = vlt.get("bbox_px")
+        if vx:
+            cv2.rectangle(overlay, (vx[0], vx[1]), (vx[0] + vx[2], vx[1] + vx[3]), (200, 80, 180), 1, cv2.LINE_AA)
     return overlay
 
 
@@ -534,7 +892,13 @@ def process_file(
     if analysis_pixels.shape[:2] != analysis_gray.shape:
         raise RuntimeError("Color/grayscale analysis rasters do not share one coordinate frame.")
     model = load_model(model_path) if model_path else get_default_model()
-    scene = analyze_array(analysis_gray, model=model)
+    scene = analyze_array(
+        analysis_gray,
+        model=model,
+        adaptive_staffs=True,
+        enable_extended_notation=True,
+        enable_beer_lambert=True,
+    )
     residual_skew = scene["capture_diagnostics"]["estimated_staffline_angle_deg"]
     source_skew = (
         rectification.estimated_skew_degrees

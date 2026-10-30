@@ -236,6 +236,10 @@ def _write_voice(measure: ET.Element, notes: list[dict], voice_number: int) -> i
             staff_number = note.get("_staff_number")
             if staff_number is not None:
                 _sub(xml_note, "staff", staff_number)
+            if note.get("lyric_text"):
+                lyric_elem = _sub(xml_note, "lyric", number=1)
+                _sub(lyric_elem, "syllabic", note.get("lyric_syllabic", "single"))
+                _sub(lyric_elem, "text", str(note["lyric_text"]))
             notations = _sub(xml_note, "notations")
             review = _review_fields(note)
             message = "IDSR_REVIEW: " + (", ".join(review) if review else "confirm source alignment and interpretation")
@@ -314,6 +318,12 @@ def build_musicxml(scene: dict) -> str:
             for order, (staff_index, staff) in enumerate(ordered, start=1):
                 staff_numbers[staff_index] = _as_int(staff.get("staff_number", order), "Staff number", 1)
 
+        dyn_layer = scene.get("idsr_dynamic_layer") or {}
+        dyn_lyrics = dyn_layer.get("dynamic_lyrics_detected", [])
+        lyrics_by_staff: dict[int, list[dict]] = defaultdict(list)
+        for lyr_tok in dyn_lyrics:
+            lyrics_by_staff[int(lyr_tok["staff_index"])].append(lyr_tok)
+
         notes_by_measure: dict[tuple[int, int], list[dict]] = defaultdict(list)
         for note in notes:
             staff_index = _as_int(note.get("staff_index"), "Note staff index", 0)
@@ -331,6 +341,12 @@ def build_musicxml(scene: dict) -> str:
             annotated = dict(note)
             annotated["_staff_number"] = staff_numbers[staff_index]
             annotated["_staff_spacing"] = float(staff.get("spacing", 12.0))
+            if staff_index in lyrics_by_staff and "lyric_text" not in annotated:
+                cand_lyrs = lyrics_by_staff[staff_index]
+                closest = min(cand_lyrs, key=lambda l: abs(l["center_px"][0] - x))
+                if abs(closest["center_px"][0] - x) <= 1.8 * annotated["_staff_spacing"]:
+                    annotated["lyric_text"] = closest.get("text") or ("-" if closest["kind"] == "lyric_hyphen" else "la")
+                    annotated["lyric_syllabic"] = "middle" if closest["kind"] == "lyric_hyphen" else "single"
             notes_by_measure[measure_key].append(annotated)
 
         measure_keys: set[tuple[int, int]] = set(notes_by_measure)

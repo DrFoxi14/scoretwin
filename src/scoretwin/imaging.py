@@ -455,7 +455,8 @@ def rectify_page_quadrilateral(
 
     # Ordered TL, TR, BR, BL points must form a strictly convex quadrilateral.
     edges = np.roll(source, -1, axis=0) - source
-    cross_products = np.cross(edges, np.roll(edges, -1, axis=0))
+    next_edges = np.roll(edges, -1, axis=0)
+    cross_products = edges[:, 0] * next_edges[:, 1] - edges[:, 1] * next_edges[:, 0]
     if np.any(cross_products <= 1e-6):
         raise ValueError("Corners must form a clockwise, strictly convex quadrilateral in TL, TR, BR, BL order.")
     area = 0.5 * abs(float(np.dot(source[:, 0], np.roll(source[:, 1], -1))
@@ -618,49 +619,87 @@ def extract_notehead_candidates(
         if not (0.52 * spacing <= w <= 2.0 * spacing):
             continue
 
-        # A component whose stem does not cross another staff line can be tall.
-        # In its row profile the head has broad support, while the stem is narrow.
+        # A component whose stem does not cross another staff line can be tall,
+        # or a single stem may connect multiple stacked chord noteheads.
+        # In its row profile each head has broad horizontal support, while the stem is narrow.
+        sub_boxes: list[tuple[int, int, int, int, int, float, float]] = []
         if h > 1.4 * spacing:
             region = labels[y:y + h, x:x + w] == component
             row_counts = region.sum(axis=1)
-            active_rows = np.flatnonzero(row_counts >= max(4, int(0.20 * spacing)))
+            active_rows = np.flatnonzero(row_counts >= max(4, int(0.28 * spacing)))
             if len(active_rows) < max(3, int(0.30 * spacing)):
                 continue
-            row_top, row_bottom = int(active_rows.min()), int(active_rows.max())
-            head_band = region[row_top:row_bottom + 1]
-            column_counts = head_band.sum(axis=0)
-            active_columns = np.flatnonzero(column_counts >= max(2, int(0.12 * spacing)))
-            if len(active_columns) < max(3, int(0.45 * spacing)):
-                continue
-            col_left, col_right = int(active_columns.min()), int(active_columns.max())
-            x_new, y_new = x + col_left, y + row_top
-            w_new, h_new = col_right - col_left + 1, row_bottom - row_top + 1
-            area_new = int(region[row_top:row_bottom + 1, col_left:col_right + 1].sum())
-            cx = x + (col_left + col_right) / 2.0
-            cy = y + (row_top + row_bottom) / 2.0
-            x, y, w, h, area = x_new, y_new, w_new, h_new, area_new
+            # Split active_rows into contiguous vertical bands only when each band is a thick notehead
+            runs: list[list[int]] = [[int(active_rows[0])]]
+            for r_val in active_rows[1:]:
+                r_int = int(r_val)
+                if r_int - runs[-1][-1] <= 2:
+                    runs[-1].append(r_int)
+                else:
+                    runs.append([r_int])
+            if len(runs) > 1:
+                valid_head_runs = [
+                    r for r in runs
+                    if (r[-1] - r[0] + 1) >= max(4, int(0.42 * spacing))
+                    and float(region[r[0] : r[-1] + 1].mean()) >= 0.45
+                ]
+                if len(valid_head_runs) >= 2:
+                    runs = valid_head_runs
+                else:
+                    runs = [[int(active_rows.min()), int(active_rows.max())]]
+            # If two stacked chord heads touch vertically (single run > 1.40 * spacing with dense head fill), split at midpoint
+            final_bands: list[tuple[int, int]] = []
+            for run in runs:
+                r0, r1 = run[0], run[-1]
+                band_h = r1 - r0 + 1
+                band_fill = float(region[r0 : r1 + 1].mean()) if band_h > 0 else 0.0
+                if band_h > 1.40 * spacing and band_h <= 2.6 * spacing and w >= 0.85 * spacing and band_fill >= 0.45:
+                    mid = (r0 + r1) // 2
+                    final_bands.append((r0, mid))
+                    final_bands.append((mid + 1, r1))
+                else:
+                    final_bands.append((r0, r1))
 
-        if not (0.22 * spacing <= h <= 1.45 * spacing):
-            continue
-        if not (0.45 <= w / max(h, 1) <= 3.8):
-            continue
-        staff_index = min(
-            range(len(staffs)),
-            key=lambda idx: min(
-                abs(cy - staffs[idx].top),
-                abs(cy - staffs[idx].bottom),
-                abs(cy - (staffs[idx].top + staffs[idx].bottom) / 2),
-            ),
-        )
-        staff = staffs[staff_index]
-        if cy < staff.top - 2.0 * spacing or cy > staff.bottom + 2.0 * spacing:
-            continue
-        components.append({
-            "box": [x, y, w, h],
-            "center": [cx, cy],
-            "area": area,
-            "staff_index": staff_index,
-        })
+            for row_top, row_bottom in final_bands:
+                if row_bottom - row_top + 1 < max(3, int(0.25 * spacing)):
+                    continue
+                head_band = region[row_top:row_bottom + 1]
+                column_counts = head_band.sum(axis=0)
+                active_columns = np.flatnonzero(column_counts >= max(2, int(0.12 * spacing)))
+                if len(active_columns) < max(3, int(0.45 * spacing)):
+                    continue
+                col_left, col_right = int(active_columns.min()), int(active_columns.max())
+                x_new, y_new = x + col_left, y + row_top
+                w_new, h_new = col_right - col_left + 1, row_bottom - row_top + 1
+                area_new = int(region[row_top:row_bottom + 1, col_left:col_right + 1].sum())
+                cx_new = x + (col_left + col_right) / 2.0
+                cy_new = y + (row_top + row_bottom) / 2.0
+                sub_boxes.append((x_new, y_new, w_new, h_new, area_new, cx_new, cy_new))
+        else:
+            sub_boxes.append((x, y, w, h, area, cx, cy))
+
+        for bx, by, bw, bh, b_area, bcx, bcy in sub_boxes:
+            if not (0.22 * spacing <= bh <= 1.45 * spacing):
+                continue
+            if not (0.45 <= bw / max(bh, 1) <= 3.8):
+                continue
+            staff_index = min(
+                range(len(staffs)),
+                key=lambda idx: min(
+                    abs(bcy - staffs[idx].top),
+                    abs(bcy - staffs[idx].bottom),
+                    abs(bcy - (staffs[idx].top + staffs[idx].bottom) / 2),
+                ),
+            )
+            staff = staffs[staff_index]
+            if bcy < staff.top - 2.0 * spacing or bcy > staff.bottom + 2.0 * spacing:
+                continue
+            components.append({
+                "box": [bx, by, bw, bh],
+                "center": [bcx, bcy],
+                "area": b_area,
+                "staff_index": staff_index,
+            })
 
     # A staffline can split a single head into two wide fragments. Merge only
     # vertically separated boxes; overlapping components may be separate chord tones.
@@ -689,6 +728,7 @@ def extract_notehead_candidates(
                 and dx < 0.38 * spacing
                 and 0.22 * spacing < dy < 1.15 * spacing
                 and 0 < vertical_gap <= 0.42 * spacing
+                and (max(ay + ah, by + bh) - min(ay, by)) <= 1.15 * spacing
             ):
                 score = dx / spacing + vertical_gap / spacing
                 if best_score is None or score < best_score:
