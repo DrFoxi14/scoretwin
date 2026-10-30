@@ -161,6 +161,11 @@ def analyze_array(
         barlines = detect_barlines(binary, staff)
         staff_objects.append({**staff.to_dict(), "barlines": barlines})
 
+    systems = group_staffs_into_systems(gray, binary, staffs) if enable_extended_notation else []
+    for idx, s_obj in enumerate(staff_objects):
+        if systems and idx < len(systems):
+            s_obj["clef"] = systems[idx].get("inferred_clef")
+
     stem_candidates = detect_stem_candidates(
         binary,
         staffs,
@@ -173,7 +178,8 @@ def analyze_array(
         staff = staffs[staff_index]
         cx, cy = item["center"]
         if item["class"] in ("filled_head", "hollow_head", "corroded_filled_head"):
-            step, letter, octave = staff_step_and_pitch(cy, staff)
+            assigned_clef = staff_objects[staff_index].get("clef") if staff_index < len(staff_objects) else None
+            step, letter, octave = staff_step_and_pitch(cy, staff, clef=assigned_clef)
             is_corroded = (item["class"] == "corroded_filled_head") or bool(
                 (item.get("corrosion_perforation") or {}).get("is_acid_cellulose_perforation")
             )
@@ -276,7 +282,17 @@ def analyze_array(
             beams,
             {int(s["index"]): s["barlines"] for s in staff_objects},
         )
-        systems = group_staffs_into_systems(gray, binary, staffs)
+        if not systems:
+            systems = group_staffs_into_systems(gray, binary, staffs)
+        from .historical_clefs import disambiguate_clef_by_syntactic_constraints
+        for s_idx, sys_entry in enumerate(systems):
+            staff_notes_subset = [n for n in notes if int(n["staff_index"]) == s_idx]
+            if staff_notes_subset:
+                refined_clef_info = disambiguate_clef_by_syntactic_constraints(staff_notes_subset)
+                sys_entry["clef_syntactic_validation"] = {
+                    "ledger_penalty": refined_clef_info["evaluations"][0]["ledger_penalty"] if refined_clef_info["evaluations"] else 0,
+                    "confidence": refined_clef_info["confidence"],
+                }
         for note in notes:
             inferred_type = note.get("inferred_note_type", "quarter")
             type_to_q = {"whole": 4.0, "half": 2.0, "quarter": 1.0, "eighth": 0.5, "16th": 0.25}

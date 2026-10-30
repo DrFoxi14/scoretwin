@@ -1028,10 +1028,18 @@ def refine_notehead_geometry(
         "reason": None if accepted else "Template correlation was below the acceptance threshold.",
     }
 
-def staff_step_and_pitch(cy: float, staff: StaffSystem) -> tuple[int, str, int]:
-    """Map a notehead center to a diatonic treble-clef pitch proposal."""
-    step = int(round((staff.bottom - cy) / (staff.spacing / 2.0)))
-    diatonic = ["C", "D", "E", "F", "G", "A", "B"]
-    absolute_index = 2 + step  # bottom line of treble staff is E4
-    octave_delta, letter_index = divmod(absolute_index, 7)
-    return step, diatonic[letter_index], 4 + octave_delta
+def staff_step_and_pitch(
+    cy: float,
+    staff: StaffSystem,
+    clef: dict | None = None,
+) -> tuple[int, str, int]:
+    """Map a notehead center to a diatonic pitch proposal under the assigned or detected clef."""
+    from .historical_clefs import staff_step_and_pitch_with_clef
+
+    clef_dict = clef or getattr(staff, "clef", None) or {"sign": "G", "line": 2}
+    clef_sign = clef_dict.get("sign", "G")
+    clef_line = clef_dict.get("line", 2)
+    step, letter, octave, _ = staff_step_and_pitch_with_clef(
+        cy, float(staff.bottom), float(staff.spacing), clef_sign=clef_sign, clef_line=clef_line
+    )
+    return step, letter, octave

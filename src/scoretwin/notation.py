@@ -742,16 +742,37 @@ def group_staffs_into_systems(
     binary: np.ndarray,
     staffs: list[StaffSystem],
 ) -> list[dict]:
-    """Group five-line staves into multi-staff systems (e.g., grand staff / choir systems)."""
+    """Group five-line staves into multi-staff systems and infer historical or modern clefs."""
     if not staffs:
         return []
+
+    from .historical_clefs import detect_clef_glyph_at_staff_start
+
     n = len(staffs)
     if n == 1:
+        staff0 = staffs[0]
+        clef_det = detect_clef_glyph_at_staff_start(
+            gray,
+            binary,
+            staff_lines_y=staff0.lines,
+            spacing=staff0.spacing,
+        )
+        if clef_det.get("detected") and clef_det.get("confidence", 0.0) >= 0.75:
+            clef = {
+                "sign": clef_det["sign"],
+                "line": clef_det["line"],
+                "clef_id": clef_det.get("clef_id"),
+                "detected_visually": True,
+                "confidence": clef_det["confidence"],
+                "bbox_px": clef_det.get("bbox_px"),
+            }
+        else:
+            clef = {"sign": "G", "line": 2, "clef_id": "treble"}
         return [{
             "staff_index": 0,
             "system_index": 0,
             "staff_number_in_system": 1,
-            "inferred_clef": {"sign": "G", "line": 2},
+            "inferred_clef": clef,
         }]
 
     # Check vertical gaps between consecutive staves and left-edge connector ink
@@ -781,11 +802,30 @@ def group_staffs_into_systems(
         if paired_two_staff:
             sys_idx = idx // 2
             staff_num = (idx % 2) + 1
-            clef = {"sign": "G", "line": 2} if staff_num == 1 else {"sign": "F", "line": 4}
+            default_clef = {"sign": "G", "line": 2, "clef_id": "treble"} if staff_num == 1 else {"sign": "F", "line": 4, "clef_id": "bass"}
         else:
             sys_idx = idx
             staff_num = 1
-            clef = {"sign": "G", "line": 2}
+            default_clef = {"sign": "G", "line": 2, "clef_id": "treble"}
+
+        clef_det = detect_clef_glyph_at_staff_start(
+            gray,
+            binary,
+            staff_lines_y=_staff.lines,
+            spacing=_staff.spacing,
+        )
+        if clef_det.get("detected") and clef_det.get("confidence", 0.0) >= 0.75:
+            clef = {
+                "sign": clef_det["sign"],
+                "line": clef_det["line"],
+                "clef_id": clef_det.get("clef_id"),
+                "detected_visually": True,
+                "confidence": clef_det["confidence"],
+                "bbox_px": clef_det.get("bbox_px"),
+            }
+        else:
+            clef = default_clef
+
         metadata.append({
             "staff_index": idx,
             "system_index": sys_idx,
